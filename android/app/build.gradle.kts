@@ -49,7 +49,12 @@ configurations.all {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    // The "-nio" variant (not the plain desugar_jdk_libs) is required: jros2-android
+    // (jros2SettingsFile's static init) calls java.nio.file.Path.of(...), a Java 11
+    // NIO2 API. On real API 28 hardware (verified on-device) the plain variant's
+    // desugaring config only rewires java.time/streams, not java.nio.file, so that
+    // call throws NoSuchMethodError against the platform's own (older) Path class.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
 
     implementation("us.ihmc:jros2-android:1.5.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
