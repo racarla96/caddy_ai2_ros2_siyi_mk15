@@ -8,12 +8,7 @@ android/**/*.iml
 android/captures/
 android/.cxx/
 
-# Vendor reference material (large, not part of the build)
-*.apk
-*.pdf
-*.zip
-*.exe
-
 # Python analysis tooling (tools/analyze_capture.py)
 __pycache__/
 *.pyc
+docs/UniGCS-3_0_1-v527b7522-setup_48fbf8e8.exe
