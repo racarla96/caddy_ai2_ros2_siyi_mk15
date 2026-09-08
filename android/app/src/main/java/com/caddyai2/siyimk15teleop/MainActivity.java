@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
@@ -15,8 +16,13 @@ import com.caddyai2.siyimk15teleop.kinematics.BicycleTwistComputer;
 import com.caddyai2.siyimk15teleop.protocol.ChannelMapper;
 import com.caddyai2.siyimk15teleop.protocol.DecodedFrame;
 import com.caddyai2.siyimk15teleop.ros2.TwistCmdVelPublisher;
+import com.caddyai2.siyimk15teleop.sdk.FirmwareVersion;
+import com.caddyai2.siyimk15teleop.sdk.SdkFrame;
+import com.caddyai2.siyimk15teleop.sdk.SdkFrameParser;
+import com.caddyai2.siyimk15teleop.sdk.SdkSerialLink;
 import com.caddyai2.siyimk15teleop.serial.SiyiSerialReader;
 
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -26,7 +32,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -79,6 +87,15 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private final Set<Integer> seenUnknownTypes = ConcurrentHashMap.newKeySet();
     private final SimpleDateFormat logTimeFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
 
+    // On-demand diagnostic for the SIYI Datalink SDK protocol (ttyHS0, see PROTOCOL.md's
+    // "a second, documented protocol exists" section) -- one-shot request/response, not a
+    // persistent background link like SiyiSerialReader/ttyHS1, since ttyHS0 traffic depends
+    // on a still-undiscovered "Datalink -> Connection -> UART" toggle in the vendor's own
+    // app and there's nothing to passively listen to yet.
+    private static final long SDK_TEST_TIMEOUT_MS = 3000;
+    private Button sdkTestButton;
+    private final AtomicBoolean sdkTestInProgress = new AtomicBoolean(false);
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -93,6 +110,8 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         logScrollView = findViewById(R.id.logScrollView);
         findViewById(R.id.settingsButton).setOnClickListener(
                 v -> startActivity(new Intent(this, SettingsActivity.class)));
+        sdkTestButton = findViewById(R.id.sdkTestButton);
+        sdkTestButton.setOnClickListener(v -> testSdkFirmwareVersion());
 
         config = new TeleopConfig(this);
         channelMapper = new ChannelMapper();
@@ -262,6 +281,116 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                 .map(e -> String.format("type=0x%02x sub_id=0x%02x x%d",
                         (e.getKey() >> 8) & 0xFF, e.getKey() & 0xFF, e.getValue().get()))
                 .collect(Collectors.joining("\n"));
+    }
+
+    // ---- SIYI Datalink SDK (ttyHS0) one-shot diagnostic ---------------------------------
+
+    /**
+     * Opens {@link SdkSerialLink#DEVICE_PATH}, sends a {@link FirmwareVersion} request,
+     * and logs whatever comes back (or times out after {@link #SDK_TEST_TIMEOUT_MS}).
+     * Chosen as the test command for the same reason it was chosen as the first one to
+     * implement: no request payload, simplest possible round-trip. See PROTOCOL.md.
+     *
+     * <p>Plain blocking Java I/O has no per-call read timeout, so the timeout is enforced
+     * by a watchdog thread that closes the link out from under a blocked {@code read()} —
+     * that unblocks it with an {@link IOException}, which this method distinguishes from a
+     * genuine I/O error via {@link #sdkTestInProgress}/the {@code timedOut} flag below.
+     */
+    private void testSdkFirmwareVersion() {
+        if (!sdkTestInProgress.compareAndSet(false, true)) {
+            return; // a test is already running
+        }
+        sdkTestButton.setEnabled(false);
+        appendLog("[SDK] Abriendo " + SdkSerialLink.DEVICE_PATH + "...");
+
+        SdkSerialLink link = new SdkSerialLink();
+        AtomicReference<SdkFrame> received = new AtomicReference<>();
+        AtomicBoolean timedOut = new AtomicBoolean(false);
+        SdkFrameParser parser = new SdkFrameParser(new SdkFrameParser.Listener() {
+            @Override
+            public void onFrame(SdkFrame frame) {
+                received.compareAndSet(null, frame);
+            }
+
+            @Override
+            public void onResync() {
+                runOnUiThread(() -> appendLog("[SDK] resync"));
+            }
+
+            @Override
+            public void onCrcError(int cmdId) {
+                runOnUiThread(() -> appendLog(
+                        "[SDK] crc_error cmdId=0x" + Integer.toHexString(cmdId)));
+            }
+        });
+
+        Thread watchdog = new Thread(() -> {
+            try {
+                Thread.sleep(SDK_TEST_TIMEOUT_MS);
+            } catch (InterruptedException e) {
+                return; // worker finished first; nothing to do
+            }
+            if (received.get() == null) {
+                timedOut.set(true);
+                try {
+                    link.close(); // unblocks a worker stuck in a blocking read()
+                } catch (IOException ignored) {
+                }
+            }
+        }, "sdk-test-watchdog");
+        watchdog.setDaemon(true);
+
+        Thread worker = new Thread(() -> {
+            try {
+                link.open();
+                link.send(FirmwareVersion.encodeRequest());
+                runOnUiThread(() -> appendLog("[SDK] Petición FirmwareVersion enviada, esperando..."));
+                byte[] buf = new byte[256];
+                while (received.get() == null) {
+                    int n = link.read(buf);
+                    if (n < 0) {
+                        break; // EOF
+                    }
+                    if (n > 0) {
+                        parser.feed(buf, 0, n);
+                    }
+                }
+            } catch (IOException e) {
+                if (!timedOut.get()) {
+                    runOnUiThread(() -> appendLog("[SDK] Error: " + e.getMessage()));
+                }
+            } finally {
+                watchdog.interrupt();
+                try {
+                    link.close();
+                } catch (IOException ignored) {
+                }
+                SdkFrame frame = received.get();
+                runOnUiThread(() -> {
+                    if (frame != null) {
+                        appendLog("[SDK] " + describeSdkFrame(frame));
+                    } else if (timedOut.get()) {
+                        appendLog("[SDK] Sin respuesta en " + SDK_TEST_TIMEOUT_MS + "ms");
+                    }
+                    sdkTestButton.setEnabled(true);
+                    sdkTestInProgress.set(false);
+                });
+            }
+        }, "sdk-test");
+
+        watchdog.start();
+        worker.start();
+    }
+
+    private static String describeSdkFrame(SdkFrame frame) {
+        if (frame.cmdId == FirmwareVersion.CMD_ID) {
+            try {
+                return FirmwareVersion.decode(frame).toString();
+            } catch (IllegalArgumentException e) {
+                return "Frame 0x47 con payload inesperado: " + frame;
+            }
+        }
+        return "Frame recibido: " + frame;
     }
 
     /** Appends one line to the on-screen event log. Must be called on the UI thread. */

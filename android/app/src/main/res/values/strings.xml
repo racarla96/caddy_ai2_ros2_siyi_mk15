@@ -8,10 +8,11 @@
     <string name="twist_format">Twist -&gt; linear.x=%1$.2f m/s  angular.z=%2$.2f rad/s</string>
     <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
     <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
-    <string name="unknown_frames_none">Frames desconocidos: ninguno</string>
+    <string name="unknown_frames_none">ninguno</string>
 
     <string name="log_title">Log</string>
     <string name="settings_button">⚙ Ajustes</string>
+    <string name="sdk_test_button">Probar SDK (fw)</string>
 
     <string name="settings_title">Ajustes de teleoperación</string>
     <string name="settings_label_wheelbase">Distancia entre ejes (m)</string>
