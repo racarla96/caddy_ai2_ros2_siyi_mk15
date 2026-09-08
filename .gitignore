@@ -11,3 +11,9 @@ android/.cxx/
 # Vendor reference material (large, not part of the build)
 *.apk
 *.pdf
+*.zip
+*.exe
+
+# Python analysis tooling (tools/analyze_capture.py)
+__pycache__/
+*.pyc

@@ -7,4 +7,6 @@
     <string name="channels_format">CH1 (steer)=%1$d  CH3 (throttle)=%2$d\nnorm: steer=%3$.2f  throttle=%4$.2f</string>
     <string name="twist_format">Twist -&gt; linear.x=%1$.2f m/s  angular.z=%2$.2f rad/s</string>
     <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
+    <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
+    <string name="unknown_frames_none">Frames desconocidos: ninguno</string>
 </resources>

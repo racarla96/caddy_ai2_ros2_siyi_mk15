@@ -19,13 +19,20 @@ import java.io.InputStream;
  *
  * <p><b>Baud rate caveat:</b> a plain {@code File}/{@code FileInputStream} on Android
  * never calls {@code tcsetattr}/{@code cfsetispeed} — it just reads whatever bytes the
- * kernel driver hands back. That's fine if the internal joystick UART is already
- * configured (by the vendor's own service) to 115200 8N1 and is simply being read
- * here as a second consumer. If step 4 (real on-device testing) shows garbled/no
- * frames on the raw byte level (not just a CRC or framing bug — check with a hex
- * dump first), the fallback is a minimal JNI wrapper around
+ * kernel driver hands back. That's fine <i>as long as</i> the vendor's own service,
+ * {@code biz.siyi.remotecontrol} (and its {@code mcuservice} process), is running:
+ * on-device capture (`adb shell cat /dev/ttyHS1`) confirmed that service is what
+ * configures the internal joystick UART, and it does so at <b>230400 8N1</b> — not
+ * 115200 as originally assumed from the vendor manual. Without that service running,
+ * the port sits at its idle default (9600 baud, per {@code stty -F /dev/ttyHS1}) and
+ * produces zero bytes, not garbage — so "no frames at all" on a fresh device most
+ * likely means that service hasn't started yet, not a baud mismatch. This reader is
+ * simply a second consumer of whatever framing the vendor service already applied. If
+ * on-device testing shows garbled frames on the raw byte level (not just a CRC or
+ * framing bug — check with a hex dump first) even with that service confirmed
+ * running, the fallback is a minimal JNI wrapper around
  * {@code open()+termios ioctl()+read()}, along the lines of android-serialport-api,
- * to force 115200 8N1 raw mode before reading. Left as a TODO hook: see
+ * to force 230400 8N1 raw mode before reading. Left as a TODO hook: see
  * {@link #open()}.
  */
 public final class SiyiSerialReader {

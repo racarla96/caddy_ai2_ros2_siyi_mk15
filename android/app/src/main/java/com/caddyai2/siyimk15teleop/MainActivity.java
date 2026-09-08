@@ -14,7 +14,11 @@ import com.caddyai2.siyimk15teleop.protocol.DecodedFrame;
 import com.caddyai2.siyimk15teleop.ros2.TwistCmdVelPublisher;
 import com.caddyai2.siyimk15teleop.serial.SiyiSerialReader;
 
+import java.util.Comparator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 /**
  * Wires the serial reader -&gt; frame parser -&gt; channel mapper -&gt; bicycle
@@ -37,10 +41,18 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private TextView channelsText;
     private TextView twistText;
     private TextView statsText;
+    private TextView unknownFramesText;
 
     private final AtomicLong validFrames = new AtomicLong();
     private final AtomicLong crcErrors = new AtomicLong();
     private final AtomicLong resyncs = new AtomicLong();
+
+    // (type, sub_id) -> count, for frames whose (type, sub_id) isn't in FrameCatalog.
+    // Surfaced live in the UI so an unexpected wire format (like the 0x0c/0x3e frames
+    // seen in the 2026-09-08 on-device capture) is visible without an adb pull —
+    // see PROTOCOL.md's "Open question" note and tools/analyze_capture.py.
+    private static final int MAX_UNKNOWN_GROUPS_SHOWN = 5;
+    private final Map<Integer, AtomicLong> unknownFrameCounts = new ConcurrentHashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,6 +63,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         channelsText = findViewById(R.id.channelsText);
         twistText = findViewById(R.id.twistText);
         statsText = findViewById(R.id.statsText);
+        unknownFramesText = findViewById(R.id.unknownFramesText);
 
         config = new TeleopConfig(this);
         channelMapper = new ChannelMapper();
@@ -152,7 +165,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
 
     @Override
     public void onUnknownFrame(int type, int subId) {
-        // Expected in normal operation (buttons/telemetry frames); no counter needed.
+        // Some unknown frames are expected in normal operation (e.g. buttons/telemetry
+        // frames not yet added to FrameCatalog), but a *dominant* unknown group can also
+        // mean the channel frame we expect just isn't showing up on this firmware/mode
+        // (see PROTOCOL.md's "Open question" note) -- tallied and shown live so that's
+        // visible on-device without a separate adb capture + tools/analyze_capture.py run.
+        int key = ((type & 0xFF) << 8) | (subId & 0xFF);
+        unknownFrameCounts.computeIfAbsent(key, k -> new AtomicLong()).incrementAndGet();
+        runOnUiThread(this::updateStats);
     }
 
     @Override
@@ -164,5 +184,20 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private void updateStats() {
         statsText.setText(getString(R.string.stats_format,
                 validFrames.get(), crcErrors.get(), resyncs.get()));
+        unknownFramesText.setText(getString(R.string.unknown_frames_format,
+                summarizeUnknownFrames()));
+    }
+
+    /** Top unknown (type, sub_id) groups by count, e.g. "type=0x0c sub_id=0x3e x121". */
+    private String summarizeUnknownFrames() {
+        if (unknownFrameCounts.isEmpty()) {
+            return getString(R.string.unknown_frames_none);
+        }
+        return unknownFrameCounts.entrySet().stream()
+                .sorted(Comparator.comparingLong((Map.Entry<Integer, AtomicLong> e) -> e.getValue().get()).reversed())
+                .limit(MAX_UNKNOWN_GROUPS_SHOWN)
+                .map(e -> String.format("type=0x%02x sub_id=0x%02x x%d",
+                        (e.getKey() >> 8) & 0xFF, e.getKey() & 0xFF, e.getValue().get()))
+                .collect(Collectors.joining("\n"));
     }
 }

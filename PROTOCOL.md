@@ -15,9 +15,19 @@ The implementation lives under
 
 - Device node: `/dev/ttyHS1`, `crwxrwxrwx`, owned by `system:system` (checked
   with `adb shell ls -la /dev/ttyHS1`) — readable without root.
-- Baud/framing: 115200 8N1, already configured by the vendor's own service on
-  that UART; the app opens the node as a second reader (see
-  `SiyiSerialReader`) rather than configuring it itself.
+- Baud/framing: **230400 8N1** — not the 115200 originally assumed from the
+  vendor manual. Confirmed by raw on-device capture
+  (`adb shell stty -F /dev/ttyHS1`) with the vendor's own service running.
+  The app opens the node as a second reader (see `SiyiSerialReader`) rather
+  than configuring it itself.
+- **Depends on `biz.siyi.remotecontrol`**: the UART only carries traffic
+  while that vendor package (and the `biz.siyi.remotecontrol:mcuservice`
+  process it spawns) is running — it's the one that reconfigures the port to
+  230400 baud. Without it, `/dev/ttyHS1` sits at its idle default of 9600
+  baud and is **silent** (0 bytes, not garbage). So on a fresh device, "no
+  frames at all" most likely means that service hasn't started yet, not a
+  transport bug — check with `adb shell ps -A | grep -i siyi` and, if
+  needed, `adb shell am start -n biz.siyi.remotecontrol/.ui.SplashActivity`.
 
 ## Frame layout
 
@@ -56,6 +66,19 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 | `0x20` | `0x01` | 45 bytes | 16 × `uint16` LE joystick channels | Yes — the only frame type the app acts on |
 | `0x10` | `0x07` | 29 bytes | Button/switch state | No — parsed as a valid frame, payload unused |
 | `0x60` | `0x0f` | 109 bytes | Extended telemetry | No — parsed as a valid frame, payload unused |
+
+> **Open question (as of 2026-09-08):** a follow-up raw capture (bypassing
+> the app, straight off `/dev/ttyHS1` with `biz.siyi.remotecontrol` running)
+> saw **only** `type=0x0c, sub_id=0x3e`, fixed 25-byte frames with a
+> different fixed-middle (`00 10 D0 10`, not `03 10 D0 10`) — CRC-valid on
+> every frame, but not a `(type, sub_id)` in the table above, and no
+> `0x20/0x01` frame appeared at all in that window. Not yet resolved whether
+> this is a firmware-version difference (a firmware update was in progress
+> at time of writing), a missing "enable channel passthrough" step in the
+> vendor UI, or genuine drift from when this table was first captured. See
+> `tools/analyze_capture.py` for redoing this diagnostic, and the project
+> memory notes for the full investigation log. Until resolved, treat this
+> table as unconfirmed against current firmware.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's
