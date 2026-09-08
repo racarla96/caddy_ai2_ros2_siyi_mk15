@@ -1,8 +1,11 @@
 package com.caddyai2.siyimk15teleop;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
+import android.view.View;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -14,8 +17,14 @@ import com.caddyai2.siyimk15teleop.protocol.DecodedFrame;
 import com.caddyai2.siyimk15teleop.ros2.TwistCmdVelPublisher;
 import com.caddyai2.siyimk15teleop.serial.SiyiSerialReader;
 
+import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.Date;
+import java.util.Deque;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
@@ -27,6 +36,12 @@ import java.util.stream.Collectors;
  * All the actual protocol/kinematics logic lives in plain-Java, unit-testable
  * classes; this activity is just wiring + a WiFi multicast lock (required for
  * Fast-DDS SPDP/SEDP discovery on most Android WiFi stacks) + UI updates.
+ *
+ * <p>{@link #onStart()} rebuilds both {@link #twistComputer} and
+ * {@link #cmdVelPublisher} from the current {@link TeleopConfig} every time
+ * (not just once in {@code onCreate}) so that returning here from
+ * {@link SettingsActivity} — which always stops/restarts this activity —
+ * picks up whatever was just saved without needing a full app relaunch.
  */
 public class MainActivity extends AppCompatActivity implements SiyiSerialReader.Listener {
 
@@ -42,6 +57,8 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private TextView twistText;
     private TextView statsText;
     private TextView unknownFramesText;
+    private TextView logText;
+    private ScrollView logScrollView;
 
     private final AtomicLong validFrames = new AtomicLong();
     private final AtomicLong crcErrors = new AtomicLong();
@@ -54,6 +71,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private static final int MAX_UNKNOWN_GROUPS_SHOWN = 5;
     private final Map<Integer, AtomicLong> unknownFrameCounts = new ConcurrentHashMap<>();
 
+    // Scrolling event log: connect/disconnect + the *first* time each unknown (type,
+    // sub_id) shows up (counts for repeats already live in unknownFrameCounts above —
+    // logging every repeat here would just spam the window during a bad capture).
+    private static final int MAX_LOG_LINES = 200;
+    private final Deque<String> logLines = new ArrayDeque<>();
+    private final Set<Integer> seenUnknownTypes = ConcurrentHashMap.newKeySet();
+    private final SimpleDateFormat logTimeFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -64,16 +89,13 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         twistText = findViewById(R.id.twistText);
         statsText = findViewById(R.id.statsText);
         unknownFramesText = findViewById(R.id.unknownFramesText);
+        logText = findViewById(R.id.logText);
+        logScrollView = findViewById(R.id.logScrollView);
+        findViewById(R.id.settingsButton).setOnClickListener(
+                v -> startActivity(new Intent(this, SettingsActivity.class)));
 
         config = new TeleopConfig(this);
         channelMapper = new ChannelMapper();
-        rebuildTwistComputer();
-
-        cmdVelPublisher = new TwistCmdVelPublisher(
-                config.getTopicName(),
-                config.getDomainId(),
-                config.getPublishRateHz(),
-                config.getLocalStaleTimeoutMs());
 
         acquireMulticastLock();
     }
@@ -97,7 +119,19 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     @Override
     protected void onStart() {
         super.onStart();
+
+        rebuildTwistComputer();
+        cmdVelPublisher = new TwistCmdVelPublisher(
+                config.getTopicName(),
+                config.getDomainId(),
+                config.getPublishRateHz(),
+                config.getLocalStaleTimeoutMs());
         cmdVelPublisher.start();
+        appendLog(String.format(Locale.getDefault(),
+                "Config: topic=%s domain=%d rate=%dHz wheelbase=%.2fm maxSteer=%.1f° maxSpeed=%.2fm/s",
+                config.getTopicName(), config.getDomainId(), config.getPublishRateHz(),
+                config.getWheelbaseMeters(), config.getMaxSteerAngleDeg(), config.getMaxSpeedMps()));
+
         serialReader = new SiyiSerialReader(this);
         serialReader.start();
     }
@@ -109,7 +143,10 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
             serialReader.stop();
             serialReader = null;
         }
-        cmdVelPublisher.stop();
+        if (cmdVelPublisher != null) {
+            cmdVelPublisher.stop();
+            cmdVelPublisher = null;
+        }
     }
 
     @Override
@@ -124,14 +161,19 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
 
     @Override
     public void onConnected() {
-        runOnUiThread(() -> statusText.setText(R.string.status_connected));
+        runOnUiThread(() -> {
+            statusText.setText(R.string.status_connected);
+            appendLog("Conectado a " + SiyiSerialReader.DEVICE_PATH);
+        });
     }
 
     @Override
     public void onDisconnected(Throwable error) {
-        runOnUiThread(() -> statusText.setText(
-                error == null ? getString(R.string.status_disconnected)
-                        : getString(R.string.status_error, error.getMessage())));
+        runOnUiThread(() -> {
+            statusText.setText(error == null ? getString(R.string.status_disconnected)
+                    : getString(R.string.status_error, error.getMessage()));
+            appendLog("Desconectado" + (error == null ? "" : ": " + error));
+        });
     }
 
     @Override
@@ -149,12 +191,26 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
 
         runOnUiThread(() -> {
             channelsText.setText(getString(R.string.channels_format,
-                    channels[ChannelMapper.CHANNEL_INDEX_STEER],
-                    channels[ChannelMapper.CHANNEL_INDEX_THROTTLE],
-                    steerNorm, throttleNorm));
+                    formatAllChannels(channels), steerNorm, throttleNorm));
             twistText.setText(getString(R.string.twist_format, twist.linearX, twist.angularZ));
             updateStats();
         });
+    }
+
+    private static final int CHANNELS_PER_LOG_LINE = 8;
+
+    /** All 16 raw channels, e.g. for spotting which index moves under a given stick
+     * during on-device diagnosis (not just the CH1/CH3 this app currently acts on).
+     * Wrapped to {@link #CHANNELS_PER_LOG_LINE} fields per line to fit the screen. */
+    private static String formatAllChannels(int[] channels) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < channels.length; i++) {
+            if (i > 0) {
+                sb.append(i % CHANNELS_PER_LOG_LINE == 0 ? '\n' : ' ');
+            }
+            sb.append(String.format(Locale.getDefault(), "CH%-2d=%4d", i + 1, channels[i]));
+        }
+        return sb.toString();
     }
 
     @Override
@@ -172,7 +228,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         // visible on-device without a separate adb capture + tools/analyze_capture.py run.
         int key = ((type & 0xFF) << 8) | (subId & 0xFF);
         unknownFrameCounts.computeIfAbsent(key, k -> new AtomicLong()).incrementAndGet();
-        runOnUiThread(this::updateStats);
+        boolean firstTimeSeen = seenUnknownTypes.add(key);
+        runOnUiThread(() -> {
+            if (firstTimeSeen) {
+                appendLog(String.format(Locale.getDefault(),
+                        "Nuevo tipo de frame desconocido: type=0x%02x sub_id=0x%02x", type, subId));
+            }
+            updateStats();
+        });
     }
 
     @Override
@@ -199,5 +262,15 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                 .map(e -> String.format("type=0x%02x sub_id=0x%02x x%d",
                         (e.getKey() >> 8) & 0xFF, e.getKey() & 0xFF, e.getValue().get()))
                 .collect(Collectors.joining("\n"));
+    }
+
+    /** Appends one line to the on-screen event log. Must be called on the UI thread. */
+    private void appendLog(String line) {
+        logLines.addLast(logTimeFormat.format(new Date()) + "  " + line);
+        while (logLines.size() > MAX_LOG_LINES) {
+            logLines.removeFirst();
+        }
+        logText.setText(String.join("\n", logLines));
+        logScrollView.post(() -> logScrollView.fullScroll(View.FOCUS_DOWN));
     }
 }

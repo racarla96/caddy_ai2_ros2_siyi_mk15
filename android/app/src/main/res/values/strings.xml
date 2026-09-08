@@ -4,9 +4,26 @@
     <string name="status_disconnected">Desconectado de /dev/ttyHS1</string>
     <string name="status_connected">Conectado a /dev/ttyHS1</string>
     <string name="status_error">Error: %1$s</string>
-    <string name="channels_format">CH1 (steer)=%1$d  CH3 (throttle)=%2$d\nnorm: steer=%3$.2f  throttle=%4$.2f</string>
+    <string name="channels_format">%1$s\nnorm: steer(CH1)=%2$.2f  throttle(CH3)=%3$.2f</string>
     <string name="twist_format">Twist -&gt; linear.x=%1$.2f m/s  angular.z=%2$.2f rad/s</string>
     <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
     <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
     <string name="unknown_frames_none">Frames desconocidos: ninguno</string>
+
+    <string name="log_title">Log</string>
+    <string name="settings_button">⚙ Ajustes</string>
+
+    <string name="settings_title">Ajustes de teleoperación</string>
+    <string name="settings_label_wheelbase">Distancia entre ejes (m)</string>
+    <string name="settings_label_max_steer">Ángulo de dirección máximo (°)</string>
+    <string name="settings_label_max_speed">Velocidad máxima (m/s)</string>
+    <string name="settings_label_topic">Topic</string>
+    <string name="settings_label_domain_id">DDS domain ID</string>
+    <string name="settings_label_publish_rate">Tasa de publicación (Hz)</string>
+    <string name="settings_label_stale_timeout">Timeout de datos obsoletos (ms)</string>
+    <string name="settings_save">Guardar</string>
+    <string name="settings_cancel">Cancelar</string>
+    <string name="settings_restore_defaults">Restaurar valores por defecto</string>
+    <string name="settings_saved">Ajustes guardados</string>
+    <string name="settings_defaults_loaded">Valores por defecto cargados (pulsa Guardar para aplicarlos)</string>
 </resources>

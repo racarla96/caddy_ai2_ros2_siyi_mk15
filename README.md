@@ -43,8 +43,10 @@ limitation in PROTOCOL.md.
     republishes at a fixed rate independent of input frame rate.
   - `config/` — `TeleopConfig`: user-adjustable vehicle/transport parameters,
     persisted in `SharedPreferences`.
-  - `MainActivity` — wiring + live diagnostics UI only; no protocol/math
-    logic of its own.
+  - `MainActivity` — wiring + live diagnostics UI (raw channel values,
+    computed `Twist`, frame/error counters, an on-screen scrolling event
+    log) only; no protocol/math logic of its own.
+  - `SettingsActivity` — in-app form for every `TeleopConfig` field.
 - `PROTOCOL.md` — the reverse-engineered SIYI MK15 serial protocol.
 - `MK15_User_Manual_v1_9_*.pdf`, `UniGCS_prod_mk15_*.apk` — vendor reference
   material kept alongside the repo for reverse-engineering reference; not
@@ -82,7 +84,11 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Configuration
 
-`TeleopConfig` (SharedPreferences-backed, no rebuild needed to change):
+`TeleopConfig` (SharedPreferences-backed, no rebuild needed to change) —
+editable in-app via the "⚙ Ajustes" button on the main screen
+(`SettingsActivity`), which validates every field before saving and applies
+the new values the moment you return (`MainActivity.onStart()` rebuilds the
+kinematics computer and DDS publisher from the current config every time):
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -107,9 +113,10 @@ being dropped in flight.
   real `/dev/ttyHS1` traffic and the actual DDS link is the remaining
   real-hardware step.
 - `SiyiSerialReader` opens `/dev/ttyHS1` with a plain `FileInputStream`,
-  relying on the vendor's own service having already configured the UART
-  (115200 8N1). If real hardware testing shows garbled bytes at the raw
-  level, the fallback is a small JNI `termios`-configuring wrapper — see the
+  relying on the vendor's own `biz.siyi.remotecontrol` service having
+  already configured the UART (230400 8N1 — see PROTOCOL.md's Transport
+  section). If real hardware testing shows garbled bytes at the raw level,
+  the fallback is a small JNI `termios`-configuring wrapper — see the
   Javadoc on `SiyiSerialReader.open()`.
 - Only the joystick-channel frame type (`0x20/0x01`) is decoded today;
   buttons and extended telemetry frames are parsed (correct length/CRC) but
