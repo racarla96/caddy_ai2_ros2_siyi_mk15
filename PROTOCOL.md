@@ -142,6 +142,62 @@ serial glitches without a length field to double-check against. It's proven
 in `FrameParserTest`, including a case with a stray `AA 0A 02` inside
 unrelated noise, immediately followed by one genuine frame.
 
+## Update 2026-09-09: a second, *documented* protocol exists — likely the real path
+
+On-device investigation of the "Open question" above (after the firmware/app
+update to `biz.siyi.remotecontrol` 3.1.6) found that `/dev/ttyHS1` now only
+carries a 14-byte heartbeat (`type=0x01, sub_id=0x60`, 1-byte payload,
+~1/sec) — confirmed by the vendor's *own* logcat output
+(`SIYIRemoteControlParser: parseRcCmd, cmdId:60 data:00`), not just our
+parser. No channel data at all appeared on that port in this session.
+
+Meanwhile, `MK15_User_Manual_v1_9.pdf` section 4.8 ("SIYI Datalink SDK")
+documents a completely different, **official, request/response protocol**
+on a **different port**, seemingly built exactly for this use case:
+
+- Port: **`/dev/ttyHS0`** (not `ttyHS1`) at **115200 baud**.
+- Only active once **"Datalink → Connection → UART"** is selected in the
+  vendor's own "SIYI TX" app (`biz.siyi.remotecontrol`) — not yet located
+  in that app's UI (it renders without an accessibility tree, so needs
+  someone on the physical touchscreen, not `adb`/`uiautomator`).
+- Framing: `STX(2)=0x55 0x66 | CTRL(1) | Data_len(2 LE) | SEQ(2 LE) |
+  CMD_ID(1) | DATA(Data_len) | CRC16(2 LE)`. `Data_len` is carried
+  explicitly — no length catalog needed, unlike the `ttyHS1` protocol above.
+- CRC16: **the same algorithm** already implemented in `Crc16.java` (poly
+  `0x1021`, init 0, not reflected, no final XOR) — the manual's own C
+  reference in section 4.8.4 matches it exactly. One CRC engine, reused
+  across both protocols.
+- **`CMD_ID 0x42` "Request Channel Data"** is the actual goal: request a
+  frequency (0=off .. 7=100Hz), get back 16 × `int16_t` channels (default
+  range ~1050–1950, close to but not identical to the 1000–2000 assumed
+  for `ttyHS1` — needs re-confirming once real ACKs are captured).
+- Implementation started with **`CMD_ID 0x47` "Request Firmware Version"**
+  instead (see `android/.../sdk/FirmwareVersion.java`) — no request
+  payload, simplest possible round-trip to validate framing + CRC on real
+  hardware before building anything that depends on it.
+- **Manual erratum found while implementing this**: the worked ACK example
+  for `CMD_ID 0x47` in section 4.8.2 has a CRC16 that doesn't check out
+  against the algorithm documented two pages later (computed `0x616d` vs.
+  the example's printed `0x216d` — low byte matches, high byte doesn't,
+  looks like a transcription slip). The *request* half of that same
+  example checks out exactly, and so does every byte of live-hardware
+  traffic CRC-verified earlier in this investigation, so the algorithm as
+  implemented is trusted over the one erroneous example byte pair — see
+  `FirmwareVersion`'s Javadoc.
+
+New code lives under `android/.../sdk/` (`SdkFrame`, `SdkFrameParser`,
+`FirmwareVersion`), deliberately separate from `protocol/` (the `ttyHS1`
+code above) rather than replacing it — until a real capture on `ttyHS0`
+confirms this is in fact the live path, both are kept.
+
+**Next steps**: (1) find "Datalink → Connection → UART" in the SIYI TX app
+on the handset's touchscreen; (2) redo a raw capture, this time on
+`/dev/ttyHS0`; (3) once traffic appears, send the `FirmwareVersion` request
+first as a framing sanity check, then implement `CMD_ID 0x42` the same way;
+(4) if this pans out, `SiyiSerialReader` needs to become bidirectional
+(currently read-only `FileInputStream`) and `MainActivity`'s pipeline needs
+to target `ttyHS0`/this protocol instead of (or alongside) `ttyHS1`.
+
 ## Known limitation: `bicycle_cmd_relay` reverse steering recovery
 
 Not a protocol issue — a downstream one, but documented here because
