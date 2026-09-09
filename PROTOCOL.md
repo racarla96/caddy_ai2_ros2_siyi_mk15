@@ -209,7 +209,101 @@ framing sanity check, then "Probar canales" to confirm `CMD_ID 0x42`
 end-to-end; (4) if this pans out, `SiyiSerialReader` needs to become
 bidirectional (currently read-only `FileInputStream`) and `MainActivity`'s
 pipeline needs to target `ttyHS0`/this protocol instead of (or alongside)
-`ttyHS1`.
+`ttyHS1`. **(1)-(3) are now done — see the 2026-09-10 update below.**
+
+## Update 2026-09-10: protocol confirmed live, a real transport bug found and
+## fixed, `CMD_ID 0x42` still unresolved
+
+"Datalink → Connection → UART" was found and selected on the touchscreen.
+With the handset connected over `adb`, went straight to raw testing against
+`/dev/ttyHS0` (bypassing the app) before touching any Java code, to isolate
+transport issues from protocol-decode issues.
+
+**Finding 1 — the vendor UI toggle does *not* configure the port.** Even
+with "UART" selected, `adb shell stty -F /dev/ttyHS0` still showed the idle
+default: **9600 baud**, not the 115200 the manual documents. Unlike
+`ttyHS1` (which `biz.siyi.remotecontrol` reliably reconfigures to 230400
+once its own service is running), nothing reconfigures `ttyHS0` — whatever
+opens it has to set this up itself.
+
+**Finding 2 — the idle default also has flags that silently corrupt frame
+bytes.** Full idle `stty -F /dev/ttyHS0` output: `iuclc ixon ixoff ixany`
+all *on* (alongside 9600 baud). `iuclc` lowercases any *incoming* byte in
+the uppercase-ASCII-letter range (0x41-0x5A) — since it's an input flag, it
+only touches bytes the host reads back from the device, not bytes sent to
+it. Sent a `CMD_ID 0x47` request (`55 66 01 00 00 00 00 47 66 ec`, byte-for-
+byte the same request confirmed correct against the manual's own example)
+through this dirty config with `adb shell "printf '\x55...' > /dev/ttyHS0"`
++ a backgrounded `cat /dev/ttyHS0 > file` to capture the reply. The device
+answered correctly, but what came back over the corrupted read path was:
+
+```
+75 66 02 10 00 01 00 67 04 05 05 68 00 00 00 00 06 02 00 76 00 00 00 00 f3 a3
+```
+
+— `0x55` (sync, `'U'`) read back as `0x75` (`'u'`), `0x47` (`CMD_ID`, `'G'`)
+read back as `0x67` (`'g'`), both exactly the +0x20 `iuclc` lowercasing bit
+flip, both landing on bytes this protocol depends on (STX and CMD_ID).
+`ixon`/`ixoff`/`ixany` (software XON/XOFF flow control) were also on and
+are a second latent risk — they can drop, not just corrupt, any in-band
+byte that collides with the flow-control control codes.
+
+**Finding 3 — with the port correctly configured, the protocol works,
+for real, end-to-end.** After `adb shell stty -F /dev/ttyHS0 115200 cs8
+-parenb -cstopb raw -echo -iuclc -ixon -ixoff -ixany -inpck -istrip
+-icrnl`, the same `CMD_ID 0x47` request/response came back clean and
+CRC-valid:
+
+```
+Send:     55 66 01 00 00 00 00 47 66 ec
+Response: 55 66 02 10 00 02 00 47 04 05 05 68 00 00 00 00 06 02 00 56 00 00 00 00 f3 d1
+```
+
+Decodes (per `FirmwareVersion`) to `rcVersion=5.5.4 (product 0x68)`,
+`rfVersion=0.0.0 (product 0x00)`, `groundVersion=0.2.6 (product 0x56)`,
+`skyVersion=0.0.0 (product 0x00)` — the RC figure matches the vendor app's
+*own* logcat output for the same handset (`RemoteControlService:
+deviceInfo... rcuVer=5.5.4... rcuModel=68`) captured independently in the
+same session, and the response's CRC16 (`0xd1f3`) checks out exactly
+against `Crc16`. This is the first confirmed live round trip on this
+protocol — port, baud, framing, and CRC are no longer hypothetical.
+
+**Fix landed**: `SdkSerialLink.open()` now runs `stty` itself (see
+`sttyArgs()`) before opening the device, rather than assuming the vendor
+app already left it usable — see that class's Javadoc for the full
+reasoning and `SdkSerialLinkTest` for the regression test pinning the
+required flags. Verified the fix against the real dirty-state bug: reset
+`/dev/ttyHS0` to `9600 iuclc ixon ixoff ixany` by hand, ran the exact argv
+`sttyArgs()` builds, redid the `CMD_ID 0x47` round trip — came back clean
+(`55 66 02 10 00 04 00 47 ...`, valid CRC). Driving the actual on-screen
+buttons to confirm end-to-end through the app itself wasn't possible this
+session (the MK15's screen dozes almost immediately and `uiautomator`
+needs it awake and settled — see "Useful diagnostic commands" in the
+project memory) — this was validated one layer down, by replicating
+`SdkSerialLink`'s exact command instead. Still worth a real button-press
+confirmation next time someone's on the device.
+
+**Still unresolved: `CMD_ID 0x42` "Request Channel Data" gets zero bytes
+back.** Sent both example requests from the manual (4Hz — byte-identical
+to `55 66 01 01 00 00 00 42 02 b5 c0` — and 100Hz) through the *correctly
+configured* port, waited up to 6s, nothing came back at all — not even a
+malformed reply, just silence, while `0x47` on the same port in the same
+session kept responding correctly. Not a framing/CRC/transport problem
+(same link, same session, same config that just proved itself against
+`0x47`). Leading hypotheses, not yet distinguished: (a) the manual's own
+note under this command — "Enabling RC channel output will affect
+telemetry communication as they are using the same port" — hints this
+might need a separate enable step beyond just picking "UART" as the
+connection type, possibly `CMD_ID 0x17`'s `match`/system-settings command
+or a dedicated toggle elsewhere in the SIYI TX app; (b) this firmware
+build (product `0x68`, RC version 5.5.4) may simply not implement `0x42`
+even though it's in the manual for the product line generally; (c) it may
+require a paired air unit / active RF link to have real channel data to
+report at all (this desk setup has none — `biz.siyi.pilot` was seen
+earlier failing to reach the air-unit video subnet). `MainActivity`'s
+"Probar canales" button (added the same session `0x42` was implemented,
+see the update above) is ready to retry this the moment any of those
+hypotheses gets tested.
 
 ## Known limitation: `bicycle_cmd_relay` reverse steering recovery
 
