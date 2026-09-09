@@ -48,6 +48,9 @@ limitation in PROTOCOL.md.
     log) only; no protocol/math logic of its own.
   - `SettingsActivity` — in-app form for every `TeleopConfig` field.
 - `PROTOCOL.md` — the reverse-engineered SIYI MK15 serial protocol.
+- `SDK_COMMANDS.md` — full command-by-command catalog of the official SIYI
+  Datalink SDK protocol (manual section 4.8), with real on-device test
+  results for every read command.
 - `MK15_User_Manual_v1_9_*.pdf`, `UniGCS_prod_mk15_*.apk` — vendor reference
   material kept alongside the repo for reverse-engineering reference; not
   part of the build (untracked — see `.gitignore`).

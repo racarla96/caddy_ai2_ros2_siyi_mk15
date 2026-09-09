@@ -283,6 +283,16 @@ project memory) — this was validated one layer down, by replicating
 `SdkSerialLink`'s exact command instead. Still worth a real button-press
 confirmation next time someone's on the device.
 
+**Full command catalog**: every command the manual documents (`0x40`
+through `0x4D`), with real on-device test results for each read command
+and the manual's own CRC errata cross-checked — see
+[`SDK_COMMANDS.md`](SDK_COMMANDS.md). Short version: 9 of 10 read
+commands tested respond with valid, CRC-correct data on real hardware;
+`0x42` is the only one that doesn't (see below). The 3 write commands
+(`0x17`, `0x4A`, `0x4D`) were deliberately not tested — they mutate
+persistent state (bind/telemetry baud, live channel mapping, live
+channel reverse) on a handset that ends up controlling a real vehicle.
+
 **Still unresolved: `CMD_ID 0x42` "Request Channel Data" gets zero bytes
 back.** Sent both example requests from the manual (4Hz — byte-identical
 to `55 66 01 01 00 00 00 42 02 b5 c0` — and 100Hz) through the *correctly
