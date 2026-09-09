@@ -16,6 +16,7 @@ import com.caddyai2.siyimk15teleop.kinematics.BicycleTwistComputer;
 import com.caddyai2.siyimk15teleop.protocol.ChannelMapper;
 import com.caddyai2.siyimk15teleop.protocol.DecodedFrame;
 import com.caddyai2.siyimk15teleop.ros2.TwistCmdVelPublisher;
+import com.caddyai2.siyimk15teleop.sdk.ChannelData;
 import com.caddyai2.siyimk15teleop.sdk.FirmwareVersion;
 import com.caddyai2.siyimk15teleop.sdk.SdkFrame;
 import com.caddyai2.siyimk15teleop.sdk.SdkFrameParser;
@@ -87,13 +88,15 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private final Set<Integer> seenUnknownTypes = ConcurrentHashMap.newKeySet();
     private final SimpleDateFormat logTimeFormat = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
 
-    // On-demand diagnostic for the SIYI Datalink SDK protocol (ttyHS0, see PROTOCOL.md's
+    // On-demand diagnostics for the SIYI Datalink SDK protocol (ttyHS0, see PROTOCOL.md's
     // "a second, documented protocol exists" section) -- one-shot request/response, not a
     // persistent background link like SiyiSerialReader/ttyHS1, since ttyHS0 traffic depends
     // on a still-undiscovered "Datalink -> Connection -> UART" toggle in the vendor's own
-    // app and there's nothing to passively listen to yet.
+    // app and there's nothing to passively listen to yet. Both buttons share one in-flight
+    // flag/watchdog path (runSdkTest) since they'd otherwise race to open the same device.
     private static final long SDK_TEST_TIMEOUT_MS = 3000;
     private Button sdkTestButton;
+    private Button sdkChannelsTestButton;
     private final AtomicBoolean sdkTestInProgress = new AtomicBoolean(false);
 
     @Override
@@ -111,7 +114,11 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         findViewById(R.id.settingsButton).setOnClickListener(
                 v -> startActivity(new Intent(this, SettingsActivity.class)));
         sdkTestButton = findViewById(R.id.sdkTestButton);
-        sdkTestButton.setOnClickListener(v -> testSdkFirmwareVersion());
+        sdkTestButton.setOnClickListener(v ->
+                runSdkTest("FirmwareVersion", FirmwareVersion.encodeRequest()));
+        sdkChannelsTestButton = findViewById(R.id.sdkChannelsTestButton);
+        sdkChannelsTestButton.setOnClickListener(v ->
+                runSdkTest("ChannelData", ChannelData.encodeRequest(ChannelData.Frequency.HZ_10)));
 
         config = new TeleopConfig(this);
         channelMapper = new ChannelMapper();
@@ -286,21 +293,22 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     // ---- SIYI Datalink SDK (ttyHS0) one-shot diagnostic ---------------------------------
 
     /**
-     * Opens {@link SdkSerialLink#DEVICE_PATH}, sends a {@link FirmwareVersion} request,
-     * and logs whatever comes back (or times out after {@link #SDK_TEST_TIMEOUT_MS}).
-     * Chosen as the test command for the same reason it was chosen as the first one to
-     * implement: no request payload, simplest possible round-trip. See PROTOCOL.md.
+     * Opens {@link SdkSerialLink#DEVICE_PATH}, sends one pre-encoded SDK request, and logs
+     * whatever comes back (or times out after {@link #SDK_TEST_TIMEOUT_MS}). Shared by both
+     * on-screen SDK test buttons ({@link FirmwareVersion}, {@link ChannelData}) — same
+     * open/send/watchdog dance either way, only the request bytes and log label differ.
      *
      * <p>Plain blocking Java I/O has no per-call read timeout, so the timeout is enforced
      * by a watchdog thread that closes the link out from under a blocked {@code read()} —
      * that unblocks it with an {@link IOException}, which this method distinguishes from a
      * genuine I/O error via {@link #sdkTestInProgress}/the {@code timedOut} flag below.
      */
-    private void testSdkFirmwareVersion() {
+    private void runSdkTest(String requestLabel, byte[] requestBytes) {
         if (!sdkTestInProgress.compareAndSet(false, true)) {
             return; // a test is already running
         }
         sdkTestButton.setEnabled(false);
+        sdkChannelsTestButton.setEnabled(false);
         appendLog("[SDK] Abriendo " + SdkSerialLink.DEVICE_PATH + "...");
 
         SdkSerialLink link = new SdkSerialLink();
@@ -343,8 +351,8 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         Thread worker = new Thread(() -> {
             try {
                 link.open();
-                link.send(FirmwareVersion.encodeRequest());
-                runOnUiThread(() -> appendLog("[SDK] Petición FirmwareVersion enviada, esperando..."));
+                link.send(requestBytes);
+                runOnUiThread(() -> appendLog("[SDK] Petición " + requestLabel + " enviada, esperando..."));
                 byte[] buf = new byte[256];
                 while (received.get() == null) {
                     int n = link.read(buf);
@@ -373,6 +381,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                         appendLog("[SDK] Sin respuesta en " + SDK_TEST_TIMEOUT_MS + "ms");
                     }
                     sdkTestButton.setEnabled(true);
+                    sdkChannelsTestButton.setEnabled(true);
                     sdkTestInProgress.set(false);
                 });
             }
@@ -388,6 +397,13 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                 return FirmwareVersion.decode(frame).toString();
             } catch (IllegalArgumentException e) {
                 return "Frame 0x47 con payload inesperado: " + frame;
+            }
+        }
+        if (frame.cmdId == ChannelData.CMD_ID) {
+            try {
+                return ChannelData.decode(frame).toString();
+            } catch (IllegalArgumentException e) {
+                return "Frame 0x42 con payload inesperado: " + frame;
             }
         }
         return "Frame recibido: " + frame;

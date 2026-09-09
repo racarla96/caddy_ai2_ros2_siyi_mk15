@@ -32,6 +32,13 @@
                 android:text="@string/sdk_test_button" />
 
             <Button
+                android:id="@+id/sdkChannelsTestButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:text="@string/sdk_channels_test_button" />
+
+            <Button
                 android:id="@+id/settingsButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"

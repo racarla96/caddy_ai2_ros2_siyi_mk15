@@ -184,19 +184,32 @@ on a **different port**, seemingly built exactly for this use case:
   traffic CRC-verified earlier in this investigation, so the algorithm as
   implemented is trusted over the one erroneous example byte pair — see
   `FirmwareVersion`'s Javadoc.
+- **`CMD_ID 0x42` "Request Channel Data" is now implemented too**
+  (`android/.../sdk/ChannelData.java`), still without hardware access —
+  encode/decode only, verified against the manual's worked examples the
+  same way `FirmwareVersion` was. **Same erratum pattern found again**: the
+  manual's worked ACK example for this command also has a CRC16 that
+  doesn't check out (computed `0x8be2` vs. printed `0x88ff`), while both
+  *request* examples (4Hz and OFF) check out exactly — see `ChannelData`'s
+  Javadoc. `ChannelDataTest` decodes that example's payload directly,
+  bypassing the frame-level CRC, same workaround as `FirmwareVersionTest`.
+  `MainActivity` now has a second "Probar canales" button next to "Probar
+  SDK (fw)" (both share one generic `runSdkTest` runner) so this is ready
+  to try on-device the moment `ttyHS0` responds to anything.
 
 New code lives under `android/.../sdk/` (`SdkFrame`, `SdkFrameParser`,
-`FirmwareVersion`), deliberately separate from `protocol/` (the `ttyHS1`
-code above) rather than replacing it — until a real capture on `ttyHS0`
-confirms this is in fact the live path, both are kept.
+`FirmwareVersion`, `ChannelData`), deliberately separate from `protocol/`
+(the `ttyHS1` code above) rather than replacing it — until a real capture
+on `ttyHS0` confirms this is in fact the live path, both are kept.
 
 **Next steps**: (1) find "Datalink → Connection → UART" in the SIYI TX app
 on the handset's touchscreen; (2) redo a raw capture, this time on
-`/dev/ttyHS0`; (3) once traffic appears, send the `FirmwareVersion` request
-first as a framing sanity check, then implement `CMD_ID 0x42` the same way;
-(4) if this pans out, `SiyiSerialReader` needs to become bidirectional
-(currently read-only `FileInputStream`) and `MainActivity`'s pipeline needs
-to target `ttyHS0`/this protocol instead of (or alongside) `ttyHS1`.
+`/dev/ttyHS0`; (3) once traffic appears, use "Probar SDK (fw)" first as a
+framing sanity check, then "Probar canales" to confirm `CMD_ID 0x42`
+end-to-end; (4) if this pans out, `SiyiSerialReader` needs to become
+bidirectional (currently read-only `FileInputStream`) and `MainActivity`'s
+pipeline needs to target `ttyHS0`/this protocol instead of (or alongside)
+`ttyHS1`.
 
 ## Known limitation: `bicycle_cmd_relay` reverse steering recovery
 

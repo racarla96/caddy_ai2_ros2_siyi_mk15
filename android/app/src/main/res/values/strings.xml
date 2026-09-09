@@ -13,6 +13,7 @@
     <string name="log_title">Log</string>
     <string name="settings_button">⚙ Ajustes</string>
     <string name="sdk_test_button">Probar SDK (fw)</string>
+    <string name="sdk_channels_test_button">Probar canales</string>
 
     <string name="settings_title">Ajustes de teleoperación</string>
     <string name="settings_label_wheelbase">Distancia entre ejes (m)</string>
