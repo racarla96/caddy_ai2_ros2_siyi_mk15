@@ -505,6 +505,7 @@ vehículo.
 
 | `CMD_ID` | Método fuente (`b5.java` salvo que se indique) | Payload | Qué parece hacer |
 |---|---|---|---|
+| `0x01` | `h3.a.b(boolean)` | 1 byte (bool) | **Activar/desactivar streaming de canales** — ver PROTOCOL.md, es el disparador de `0x20/0x01` en `ttyHS1`, resuelto 2026-09-11 |
 | `0x09` | `B(RCChannel, boolean)` | canal + flag | Sin contexto claro más allá del nombre de los tipos |
 | `0x0E` | `m2(RCChannel, RCPhysicsEntity)` | canal + (tipo, id) | Mapeo canal→entidad física — parece una variante/precursora del `0x4A` ya documentado |
 | `0x11` | `m(StrokeInfo)` | canal + 2 enteros | Calibración de recorrido ("stroke") de un canal físico (min/max) |
@@ -516,6 +517,7 @@ vehículo.
 | `0x34` | `z1(boolean)` | 2 bytes | Flag genérico, sin más contexto |
 | `0x36` | `E1(AutoFrequencyState)` | 1 byte (`OFF`/`ON`/`SEARCH_OPTIMAL`) | Modo de búsqueda/salto automático de frecuencia RF |
 | `0x3C` | `a1(RCDialWheelAutoCenterInfo)` | tipo de dial + bool + entero | Auto-centrado de un dial/rueda física |
+| `0x3E` | `h3.a.a(boolean)` | 1 byte (bool) | Toggle sin identificar — **es el comando que la primerísima captura de `ttyHS1` de este proyecto (2026-09-07/08) vio** (`type=0x0c, sub_id=0x3e`); no relacionado con canales, resuelto 2026-09-11 |
 | `0x44` | `s1(RCPhysicsEntity)` | 2 bytes (tipo, id) | ⚠️ **Conflicto**: el manual documenta `0x44` como lectura "Image Transmission Link Status" (ya confirmado funcionando arriba); aquí se usa como escritura para mapear una entidad física. Mismo `CMD_ID`, semántica distinta — sin resolver cuál prevalece en este firmware, no probar sin más contexto |
 | `0x46` | `i(ArrayList)` | array variable | Probablemente escritura en bloque de varios mapeos/calibraciones a la vez |
 | `0x50` | `f2(WirelessMode)` | 1 byte (`MODE_5/8/15/24KM`) | Selección de modo de alcance/potencia del enlace inalámbrico |
@@ -525,7 +527,9 @@ vehículo.
 | `0x5A` | `t1(RcOutputMode)` | 1 byte (`OFF`/`PPM`/`SBUS`) | Modo de salida física del RC |
 | `0x5F` | `d2(PWMMapInfo)` | 2 bytes (canal PWM, canal RC) | Mapeo de un canal PWM físico a un canal RC |
 | `0x64` | `A0(RCChannel)` | 1+ bytes | Sin contexto claro adicional |
+| `0x70` | `h3.a.c(ImageTransFrequencyBand)` | 1 byte (ordinal) | Banda de frecuencia de la transmisión de imagen — **dest=20, no 16** (el único de esta tabla con destino distinto de RCU) |
 | `0x82` | `e1(ExternalSdkConnectType)` | 1 byte (0-6) | Tipo de conexión del "SDK externo" — ver hallazgo clave abajo |
+| `0x84` | `h3.a.e(int, boolean, boolean)` | 2 bytes | "setMultiAirUnitMode" (nombre de log conservado) — sin explorar más |
 
 ### Hallazgo clave: `0x82` "External SDK Connect Type" — descartado para MK15
 

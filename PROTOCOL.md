@@ -138,23 +138,47 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 > kept going for well over a minute with that app backgrounded, so nothing
 > needs to keep it open once triggered.
 >
-> **Still open (low priority — doesn't block anything now)**: what exactly
-> *triggers* the RCU to start streaming `0x20/0x01` in the first place isn't
-> captured yet — a read-only `cat` of the port only sees MCU→app traffic, not
-> whatever request the app itself writes out when that screen opens.
-> `RemoteControlService.onCreate()` (decompiled from the real app, see
-> `SDK_COMMANDS.md`) constructs `t5.k` — the same class implementing every
-> `CMD_ID` in `SDK_COMMANDS.md` — against this exact port/baud, so the likely
-> mechanism is a `t5.e`-built request frame, just not necessarily in the
-> `55 66`-framed encoding documented in the manual's section 4.8 (this port's
-> observed traffic is unmistakably `AA 0A 02`-framed, not `55 66`). Worth
-> resolving eventually so a real deployment doesn't depend on a human having
-> opened that vendor screen at least once since boot, but since streaming
-> persists indefinitely once started, it's not an active blocker. Next step
-> if/when picked back up: capture both directions at once (e.g.
-> `strace`-style write logging, or correlating `WriteTask` logcat lines
-> against a simultaneous raw capture) to catch the actual outgoing request
-> frame.
+> **Trigger identified by decompile (2026-09-11), not yet captured on the
+> wire**: traced the exact call chain from `ChannelViewModel`'s constructor
+> (which is what runs the instant that screen opens) down through
+> `RcuServiceController.D2()` (reference-counted: only acts on the *first*
+> subscriber, `"current count: N"` in the app's own logcat — matches what we
+> saw live) → `biz.siyi.pilot.rcuservice.binder.b5.Y1()` →
+> `h3.a.b(boolean)`, which builds a `t5.e` request exactly like every other
+> command in `SDK_COMMANDS.md`:
+> ```java
+> eVarU.f(new byte[]{z10 ? (byte) 1 : (byte) 0});  // payload: 1 byte, bool
+> eVarU.f11153d = true;   // need_ack
+> eVarU.f11160k = 16;     // dest = RCU
+> eVarU.f11161l = 1;      // CMD_ID = 0x01
+> ```
+> Called with `true` on the first subscriber (starts streaming) — confirmed
+> **symmetric**: `RcuServiceController.N()`/`b5.N()` (the teardown path,
+> `ChannelViewModel.clear()`) calls the identical `h3.a.b(false)` when the
+> last subscriber leaves, i.e. the same `CMD_ID 0x01` with payload `[0x00]`
+> to stop it. This matches what was observed live: streaming kept going
+> because nothing had called the `false` side yet (the vendor app was
+> merely backgrounded, its `ChannelViewModel` never torn down).
+>
+> **Bonus, resolves an old mystery**: the very first raw `/dev/ttyHS1`
+> capture this project ever did (2026-09-07/08 update above, `type=0x0c,
+> sub_id=0x3e`) is a *different* command from the same class —
+> `h3.a.a(boolean)` sends `CMD_ID 0x3E` (62 decimal), an unrelated toggle,
+> not channel streaming. That capture was never going to find the channel
+> trigger; it was catching some other feature being exercised. (The same
+> file also has `c(ImageTransFrequencyBand)` → `CMD_ID 0x70`/dest=20, and
+> `e(int, boolean, boolean)` → `CMD_ID 0x84`/"setMultiAirUnitMode" — noted
+> for completeness, not chased further.)
+>
+> **Still not captured**: the actual bytes-on-the-wire for `CMD_ID 0x01` in
+> `ttyHS1`'s `AA 0A 02` framing — this is the abstract `t5.e` layer, and how
+> `f11160k`(dest)/`f11161l`(CMD_ID) map onto the wire's `type`/`sub_id` bytes
+> for *this* port isn't nailed down yet (unlike `ttyHS0`'s `55 66` framing,
+> which is documented). Now that the exact trigger call and its two literal
+> payloads (`[0x01]`/`[0x00]`) are known, the next raw capture is much more
+> targeted: correlate a `WriteTask` logcat line against a live capture at
+> the precise moment a channel screen opens (or closes), rather than
+> guessing. Not an active blocker either way — see above.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's
