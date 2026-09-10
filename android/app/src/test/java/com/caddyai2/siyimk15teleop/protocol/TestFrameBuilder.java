@@ -29,7 +29,7 @@ final class TestFrameBuilder {
         out.write(type);
         out.write(seq & 0xFF);
         out.write((seq >> 8) & 0xFF);
-        out.write(0x03);
+        out.write((seq >> 16) & 0xFF);
         out.write(0x10);
         out.write(0xD0);
         out.write(0x10);

@@ -153,6 +153,41 @@ public class FrameParserTest {
         assertEquals(1700, listener.frames.get(0).decodeChannels()[ChannelMapper.CHANNEL_INDEX_THROTTLE]);
     }
 
+    /**
+     * Golden fixture: bytes exactly as captured off real hardware (25s raw
+     * capture of {@code /dev/ttyHS1} correlated against live logcat, see
+     * PROTOCOL.md "Update 2026-09-10/11" and
+     * {@code docs/logs/unigcs_live_logcat_2026-09-10.txt}, not committed).
+     * This is what caught the FIXED_MIDDLE/seq-width bug in the first place:
+     * this exact frame was rejected (wrongly) before that fix.
+     */
+    @Test
+    public void decodesARealHardwareCapturedChannelFrame() {
+        byte[] frame = hex("aa0a02206aeb0b10d01001"
+                + "dc05dc05dc05dc059e07dc05dc051a041a041a041a04dc05dc05e8031a041a04"
+                + "e7cb");
+
+        parser.feed(frame, 0, frame.length);
+
+        assertEquals(0, listener.resyncs);
+        assertEquals(0, listener.crcErrors);
+        assertEquals(1, listener.frames.size());
+        DecodedFrame decoded = listener.frames.get(0);
+        assertTrue(decoded.isChannelFrame());
+        int[] channels = decoded.decodeChannels();
+        assertArrayEquals(
+                new int[] {1500, 1500, 1500, 1500, 1950, 1500, 1500, 1050, 1050, 1050, 1050, 1500, 1500, 1000, 1050, 1050},
+                channels);
+    }
+
+    private static byte[] hex(String s) {
+        byte[] bytes = new byte[s.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) Integer.parseInt(s.substring(i * 2, i * 2 + 2), 16);
+        }
+        return bytes;
+    }
+
     @Test
     public void decodesKnownButtonAndTelemetryFrameLengthsWithoutCrashing() {
         byte[] buttons = TestFrameBuilder.frame(

@@ -34,18 +34,35 @@ The implementation lives under
 No explicit length field. Every frame:
 
 ```
-AA 0A 02 | type(1) | seq(2, LE) | 03 10 D0 10 | sub_id(1) | payload(N) | CRC16(2, LE)
+AA 0A 02 | type(1) | counter(3, LE) | 10 D0 10 | sub_id(1) | payload(N) | CRC16(2, LE)
 ```
 
 | Field | Size | Notes |
 |---|---|---|
 | Sync | 3 | Always `AA 0A 02`. |
 | `type` | 1 | Frame category — see catalog below. |
-| `seq` | 2 | Little-endian sequence counter, free-running, not used for framing. |
-| Fixed middle | 4 | Always `03 10 D0 10`. Never observed to vary. |
+| `counter` | 3 | Little-endian free-running counter, not a simple +1 frame index (see correction below), not used for framing. |
+| Fixed middle | 3 | Always `10 D0 10`. Never observed to vary. |
 | `sub_id` | 1 | Sub-type within `type`. `(type, sub_id)` together select the total frame length. |
 | payload | `total_length - 11 - 2` | Frame-specific. |
 | CRC16 | 2 | Little-endian, computed over every preceding byte of the frame (sync through end of payload). |
+
+> **Correction, 2026-09-10/11** (superseding the field split originally
+> documented here): this was previously described as `seq(2 LE)` followed by
+> 4 always-`03 10 D0 10` fixed bytes. That was an artifact of every capture up
+> to that point being too short to see the real field roll over — a ~25s raw
+> capture correlated against live logcat caught it going from `...0b 10 d0
+> 10` to `...0c 10 d0 10` mid-stream, proving it's actually a 3-byte counter
+> (increments ~256-512 per frame — looks like a millisecond-ish tick, not a
+> frame-by-frame sequence number) and only the trailing 3 bytes are genuinely
+> constant. Total header length is unchanged either way (10 bytes before
+> `sub_id`), so every total frame length in the catalog below is still
+> correct — this only moved where the field boundary falls, and it matters
+> because the old, too-narrow "fixed middle" check would wrongly reject real
+> frames whose counter's low byte lands outside the range any past short
+> capture happened to see. Fixed in `FrameParser`/`TestFrameBuilder`; see
+> `FrameParserTest.decodesARealHardwareCapturedChannelFrame` for a golden
+> fixture using real captured bytes that catches a regression here.
 
 Total frame length is **not** carried in the frame itself — it's looked up
 from a fixed `(type, sub_id) -> total_length` table (the "catalog") built by
@@ -67,18 +84,41 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 | `0x10` | `0x07` | 29 bytes | Button/switch state | No — parsed as a valid frame, payload unused |
 | `0x60` | `0x0f` | 109 bytes | Extended telemetry | No — parsed as a valid frame, payload unused |
 
-> **Open question (as of 2026-09-08):** a follow-up raw capture (bypassing
-> the app, straight off `/dev/ttyHS1` with `biz.siyi.remotecontrol` running)
-> saw **only** `type=0x0c, sub_id=0x3e`, fixed 25-byte frames with a
-> different fixed-middle (`00 10 D0 10`, not `03 10 D0 10`) — CRC-valid on
-> every frame, but not a `(type, sub_id)` in the table above, and no
-> `0x20/0x01` frame appeared at all in that window. Not yet resolved whether
-> this is a firmware-version difference (a firmware update was in progress
-> at time of writing), a missing "enable channel passthrough" step in the
-> vendor UI, or genuine drift from when this table was first captured. See
-> `tools/analyze_capture.py` for redoing this diagnostic, and the project
-> memory notes for the full investigation log. Until resolved, treat this
-> table as unconfirmed against current firmware.
+> **Resolved, 2026-09-10/11** (was an open question as of 2026-09-08): early
+> raw captures of `/dev/ttyHS1` (bypassing the app) only ever saw a
+> heartbeat/status frame, never `0x20/0x01` channel data. The missing
+> variable turned out to be simple: **the RCU only streams `0x20/0x01` while
+> the vendor app's own "channel data" screen is open** — a raw capture taken
+> while nothing in the app was asking for channel values will only ever see
+> whatever housekeeping traffic (heartbeats, etc.) flows regardless. Confirmed
+> by launching the real app (`biz.siyi.remotecontrol`, i.e. "SIYI TX"),
+> capturing `adb logcat` live while navigating to that screen, and — in the
+> same session — a raw `/dev/ttyHS1` capture that caught `type=0x20,
+> sub_id=0x01, 45 bytes` frames streaming at roughly 50Hz the moment that
+> screen was opened, decoding to exactly the 16 channel values the app's own
+> logcat (`SIYIRemoteControlParser: parseRcCmd, cmdId:1 data:...`) reported
+> at the same time, matching the already-confirmed channel mapping (CH1-4
+> joystick, CH5-7 switches, etc.). `FrameCatalog.CHANNELS = (0x20, 0x01, 45)`
+> — written back when this catalog was first captured, before the whole SDK
+> detour — turned out to be exactly right all along; see
+> `FrameParserTest.decodesARealHardwareCapturedChannelFrame` for the real
+> bytes as a regression fixture. Also resolved in passing: the earlier
+> `type=0x0c, sub_id=0x3e` sighting and the "fixed middle" byte drift across
+> sessions (`00`/`03`/`0b`/`0c` different times) are both explained by the
+> counter-width correction above, not by firmware/protocol drift.
+>
+> **Still open**: what exactly *triggers* the RCU to start streaming
+> `0x20/0x01` isn't captured yet — a read-only `cat` of the port only sees
+> MCU→app traffic, not whatever request the app itself writes out when that
+> screen opens. `RemoteControlService.onCreate()` (decompiled from the real
+> app, see `SDK_COMMANDS.md`) constructs `t5.k` — the same class implementing
+> every `CMD_ID` in `SDK_COMMANDS.md` — against this exact port/baud, so the
+> likely mechanism is a `t5.e`-built request frame, just not necessarily in
+> the `55 66`-framed encoding documented in the manual's section 4.8 (this
+> port's observed traffic is unmistakably `AA 0A 02`-framed, not `55 66`).
+> Next step: capture both directions at once (e.g. `strace`-style write
+> logging, or correlating `WriteTask` logcat lines against a simultaneous raw
+> capture) to catch the actual outgoing request frame.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's
@@ -126,7 +166,7 @@ positive normalized output; `BicycleTwistComputer` treats positive steer as
 The parser (`FrameParser`) never trusts a single match blindly:
 
 1. Scans for the 3-byte sync `AA 0A 02`.
-2. If the following 4 fixed bytes (`03 10 D0 10`) don't match, that was a
+2. If the following 3 fixed bytes (`10 D0 10`) don't match, that was a
    false-positive sync inside other traffic — advance one byte and rescan
    (`onResync()`).
 3. If `(type, sub_id)` isn't in the catalog, the frame can't be sized —
@@ -143,6 +183,20 @@ in `FrameParserTest`, including a case with a stray `AA 0A 02` inside
 unrelated noise, immediately followed by one genuine frame.
 
 ## Update 2026-09-09: a second, *documented* protocol exists — likely the real path
+
+> **Superseded, 2026-09-10/11**: the premise of this section — "`ttyHS1`
+> carries only a heartbeat now, channel data must live elsewhere" — turned
+> out to be an artifact of not having the vendor app's channel-data screen
+> open during that capture, not a real change in what `ttyHS1` carries. See
+> the "Resolved" callout above: `ttyHS1`'s `0x20/0x01` channel frames are
+> alive and well on current firmware, this project's own `FrameCatalog` was
+> right, and the code just had a header-parsing bug. The SDK protocol
+> described below is still real and still documented by the manual (and
+> `CMD_ID 0x42` on it still doesn't respond — see `SDK_COMMANDS.md` for the
+> full, still-unresolved investigation into that) — it just isn't the only
+> way to get channel data, and for this project's purposes `ttyHS1` is now
+> the more promising path since it's already flowing real data with no
+> extra hardware (air unit) required. Kept below for history.
 
 On-device investigation of the "Open question" above (after the firmware/app
 update to `biz.siyi.remotecontrol` 3.1.6) found that `/dev/ttyHS1` now only

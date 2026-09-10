@@ -112,9 +112,14 @@ being dropped in flight.
 ## Status / known limitations
 
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
-  `assembleDebug` produces an installable APK. On-device validation against
-  real `/dev/ttyHS1` traffic and the actual DDS link is the remaining
-  real-hardware step.
+  `assembleDebug` produces an installable APK. `FrameParser`'s header
+  layout is now validated against a real hardware-captured `0x20/0x01`
+  frame (`FrameParserTest.decodesARealHardwareCapturedChannelFrame`) — this
+  caught and fixed a real bug (see PROTOCOL.md's 2026-09-10/11 correction)
+  that would have silently rejected every real channel frame the app ever
+  saw. Still outstanding: running the actual app on-device against live
+  `/dev/ttyHS1` traffic (via `SiyiSerialReader`, not a raw capture) and the
+  actual DDS link end-to-end.
 - `SiyiSerialReader` opens `/dev/ttyHS1` with a plain `FileInputStream`,
   relying on the vendor's own `biz.siyi.remotecontrol` service having
   already configured the UART (230400 8N1 — see PROTOCOL.md's Transport

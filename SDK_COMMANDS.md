@@ -269,17 +269,29 @@ relevantes).
    `55 66` del manual, aunque la usen la misma clase `t5.k` y el mismo
    CRC16) o si hay una re-codificación intermedia para el log**.
 
-**Siguiente paso de hardware, prioridad máxima**: con `biz.siyi.remotecontrol`
-corriendo (imprescindible — el puerto está en silencio si no), intentar
-mandar nuestra propia petición `CMD_ID 0x42` (ya probada y verificada en
-`ttyHS0`) directamente contra **`/dev/ttyHS1` a 230400 baudios** en vez de
-`ttyHS0`/115200, con la misma receta de `adb shell stty` + `printf` +
-`cat` de fondo ya usada en este documento. Dos incógnitas a resolver in
-situ: (a) si el puerto admite una segunda apertura concurrente mientras
-la app ya lo tiene abierto (podría fallar o dar lecturas entremezcladas),
-y (b) si el framing real resulta no ser literalmente `55 66` (ver punto
-anterior), en cuyo caso haría falta decodificar el formato `AA 09...`
-desde cero antes de poder pedir nada por ahí a mano.
+**Actualización 2026-09-10/11 — resuelto, y con un resultado mejor de lo
+esperado**: se probó exactamente esto. El puerto sí admite una segunda
+apertura concurrente (se pudo leer sin errores mientras la app lo tenía
+abierto). Pero mandar la petición `55 66`/`CMD_ID 0x42` contra `ttyHS1`
+**no obtuvo ninguna respuesta `55 66`** — en cambio, la captura sí devolvió
+tráfico real: tramas del **protocolo antiguo `AA 0A 02`** (el que este
+proyecto documentó al principio, antes de encontrar la sección 4.8 del
+manual). Con una captura más larga (25s) mientras se reabría la pantalla
+de "datos de canal" de la app, aparecieron tramas `type=0x20, sub_id=0x01`
+(45 bytes) — **exactamente** el `FrameCatalog.CHANNELS` que el propio
+proyecto ya tenía definido en `android/.../protocol/FrameCatalog.java`
+desde el principio — con los 16 canales reales y coherentes. Es decir:
+`ttyHS1` **no habla el framing `55 66` del manual** (aunque lo construya
+la misma clase `t5.k` por dentro, ver más abajo) — habla el protocolo
+`AA 0A 02` original de este proyecto, y ese protocolo **sí funciona, en
+vivo, ahora mismo**, sin air unit y sin ninguno de los bloqueos de `0x42`.
+Detalle completo, con los bytes reales capturados y la corrección de un
+bug real que esto encontró en `FrameParser.java`, en **PROTOCOL.md**
+("Resuelto, 2026-09-10/11" en la sección del catálogo de tramas). Esto no
+cierra la investigación de `0x42`/SDK por sí solo (sigue sin resolverse
+por qué no responde), pero para el objetivo real del proyecto (canales del
+joystick) **ya no es el camino bloqueante** — `ttyHS1` con el protocolo
+viejo lo es, y ya está funcionando.
 
 ---
 

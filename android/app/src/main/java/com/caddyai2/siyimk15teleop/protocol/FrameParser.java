@@ -7,8 +7,22 @@ import java.util.Arrays;
  *
  * Framing (see PROTOCOL.md at the repo root):
  * <pre>
- *   AA 0A 02 | type(1) | seq(2 LE) | 03 10 D0 10 | sub_id(1) | payload | CRC16_LE(2)
+ *   AA 0A 02 | type(1) | counter(3 LE) | 10 D0 10 | sub_id(1) | payload | CRC16_LE(2)
  * </pre>
+ *
+ * <p><b>2026-09-10/11 correction</b>: earlier versions of this parser (and
+ * PROTOCOL.md) described the field after {@code type} as a 2-byte {@code seq}
+ * followed by 4 always-`03 10 D0 10` fixed bytes. That was wrong — it was an
+ * artifact of every capture up to that point being short enough that the
+ * field's low byte never rolled over. A ~25s raw capture correlated against
+ * live logcat (`docs/logs/unigcs_live_logcat_2026-09-10.txt`, not committed)
+ * caught it rolling from `...0b 10 d0 10` to `...0c 10 d0 10` mid-capture:
+ * it's really a 3-byte little-endian counter (increments by ~256-512 per
+ * frame, not 1 — looks like a millisecond-ish tick, not a frame index) and
+ * only the trailing 3 bytes (`10 D0 10`) are genuinely constant. Total header
+ * length is unchanged (10 bytes before `sub_id` either way), so
+ * {@link FrameCatalog}'s total frame lengths are still correct — only the
+ * field split within the header moved by one byte.
  *
  * There is no explicit length field: the total frame length is looked up from
  * {@link FrameCatalog} by (type, sub_id). Bytes arrive in arbitrary chunks from
@@ -21,9 +35,9 @@ import java.util.Arrays;
  */
 public final class FrameParser {
 
-    /** Fixed bytes always present right after the 3-byte sync + type + seq. */
-    private static final byte[] FIXED_MIDDLE = {0x03, 0x10, (byte) 0xD0, 0x10};
-    private static final int HEADER_LEN_BEFORE_SUBID = 3 /*sync*/ + 1 /*type*/ + 2 /*seq*/ + 4 /*fixed*/;
+    /** Fixed bytes always present right after the 3-byte sync + type + 3-byte counter. */
+    private static final byte[] FIXED_MIDDLE = {0x10, (byte) 0xD0, 0x10};
+    private static final int HEADER_LEN_BEFORE_SUBID = 3 /*sync*/ + 1 /*type*/ + 3 /*counter*/ + 3 /*fixed*/;
     private static final int HEADER_LEN = HEADER_LEN_BEFORE_SUBID + 1 /*sub_id*/;
     private static final int CRC_LEN = 2;
 
@@ -79,7 +93,7 @@ public final class FrameParser {
             }
 
             int type = buffer[sync + 3] & 0xFF;
-            int seq = (buffer[sync + 4] & 0xFF) | ((buffer[sync + 5] & 0xFF) << 8);
+            int seq = (buffer[sync + 4] & 0xFF) | ((buffer[sync + 5] & 0xFF) << 8) | ((buffer[sync + 6] & 0xFF) << 16);
             int subId = buffer[sync + HEADER_LEN_BEFORE_SUBID] & 0xFF;
 
             FrameCatalog.Entry entry = FrameCatalog.lookup(type, subId);
@@ -115,7 +129,7 @@ public final class FrameParser {
 
     private boolean matchesFixedMiddle(int sync) {
         for (int i = 0; i < FIXED_MIDDLE.length; i++) {
-            if (buffer[sync + 3 + 1 + 2 + i] != FIXED_MIDDLE[i]) {
+            if (buffer[sync + 3 + 1 + 3 + i] != FIXED_MIDDLE[i]) {
                 return false;
             }
         }

@@ -6,6 +6,7 @@ import java.util.Arrays;
 public final class DecodedFrame {
     public final int type;
     public final int subId;
+    /** 3-byte little-endian free-running counter from the frame header (not a simple +1 frame index — see FrameParser). */
     public final int seq;
     public final byte[] payload;
 
