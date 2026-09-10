@@ -168,26 +168,38 @@ funciona con otros 9 comandos). Hipótesis sin confirmar, de
    implementarlo aunque esté en el manual genérico de la gama.
 3. Puede necesitar una air unit emparejada para tener canales reales
    que reportar (este banco de pruebas no tiene ninguna).
-4. **Payload vacío en vez de 1 byte `freq`** — la propia app UniGCS
-   pide `0x42` con `Data_len=0` (sin el byte `freq` documentado).
-   Bytes exactos calculados: `55 66 01 00 00 00 00 42 c3 bc`. Sin
-   probar aún contra hardware real (ver hallazgo #5 más abajo —
-   contexto nuevo que hace esta hipótesis menos prioritaria que
-   cuando se planteó).
-5. **Hallazgo nuevo (decompile completo con jadx, ver sección de
-   abajo): en la app real, `0x42` no se usa como un "dame los 16
-   canales" repetible.** Se llama **una sola vez, como primer paso al
-   pulsar "emparejar" en la pantalla de vinculación RF** (analítica
-   `PAIR_START`, `BindingState` pasa de `UNBOUND` a `BINDING`) —
+4. ~~Payload vacío en vez de 1 byte `freq`~~ — **descartada, probada
+   contra hardware real (2026-09-10)**. La propia app UniGCS pide
+   `0x42` con `Data_len=0` (sin el byte `freq` documentado); se envió
+   exactamente `55 66 01 00 00 00 00 42 c3 bc` (CRC verificada) con el
+   puerto recién confirmado sano (`0x47` respondió limpio justo antes)
+   — **0 bytes de respuesta, mismo silencio que con el payload
+   documentado**. No es la pieza que falta.
+5. **`0x42` no se usa en la app como un "dame los 16 canales"
+   repetible — se llama una sola vez, como primer paso al pulsar
+   "emparejar" en la pantalla de vinculación RF** (hallazgo del
+   decompile con jadx, ver sección de abajo: analítica `PAIR_START`,
+   `BindingState` pasa de `UNBOUND` a `BINDING` —
    `InterConnectionViewModel`/`ui/interconnection/f0.java`,
-   `cVar.y()`. Esto encaja con la hipótesis 3 mejor que con leerlo
-   como un simple "dame canales": puede que `0x42` en este firmware
-   sea semánticamente "inicia/anuncia intención de recibir canales
-   (parte del handshake de bind)" y por eso no responde nada sin una
-   air unit al otro lado intentando emparejar — no un getter
-   stateless. Sigue sin confirmarse contra hardware real (no hay air
-   unit en esta mesa de pruebas), pero es el candidato más fuerte
-   ahora mismo para explicar el silencio.
+   `cVar.y()`). **Probado contra hardware real (2026-09-10) sin
+   confirmar ningún efecto lateral**: se leyó `0x16` (que expone el
+   campo `match` = estado de bind) antes y después de mandar `0x42`
+   (documentado, 4Hz) — `match` se quedó en `0x00` en ambos casos, sin
+   cambio. También se escuchó el puerto 8s completos tras el envío por
+   si la respuesta llegaba de forma asíncrona/retrasada — silencio
+   total igualmente. Osea: mandar `0x42` en aislado, sin más contexto
+   de UI/handshake y sin una air unit real presente, no produce ningún
+   efecto observable (ni ACK, ni cambio de estado de bind). Sigue
+   siendo el candidato más plausible (necesita una air unit real
+   intentando emparejar al mismo tiempo, algo que no se puede simular
+   solo con `adb`), pero ya no es una hipótesis "sin probar" — el
+   siguiente paso real es repetir esto con una air unit SIYI física
+   presente, no seguir aislando `0x42` por `adb`.
+
+**Estado a 2026-09-10 (sesión con hardware conectado, `46bed092`)**:
+las hipótesis 1, 2 y 4 se han descartado o quedado sin evidencia de
+progreso; la 3/5 (air unit emparejada) es la única que queda en pie y
+no se puede seguir investigando sin una air unit física.
 
 ---
 
