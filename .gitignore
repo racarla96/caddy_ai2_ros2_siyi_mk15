@@ -12,3 +12,6 @@ android/.cxx/
 __pycache__/
 *.pyc
 docs/UniGCS-3_0_1-v527b7522-setup_48fbf8e8.exe
+
+# Raw diagnostic captures (adb logcat dumps, contienen IDs de dispositivo)
+docs/logs/

@@ -201,6 +201,86 @@ las hipótesis 1, 2 y 4 se han descartado o quedado sin evidencia de
 progreso; la 3/5 (air unit emparejada) es la única que queda en pie y
 no se puede seguir investigando sin una air unit física.
 
+### 🔑 Hallazgo mayor (debug en vivo, mismo día): el protocolo del SDK corre también sobre `/dev/ttyHS1` a 230400 — no solo `/dev/ttyHS0`
+
+Con el mando todavía conectado, se lanzó la app real (`biz.siyi.remotecontrol`,
+actividad `biz.siyi.pilot.app.HomeActivity` — este es el APK "UniGCS" que
+descompilamos; su paquete Android real es `biz.siyi.remotecontrol`, mismo
+que "SIYI TX", confirmado con `pyaxmlparser`: `package: biz.siyi.remotecontrol,
+version: 3.1.6`) y se capturó `adb logcat` en vivo mientras el usuario
+navegaba la UI real hasta la pantalla de **datos de canal**
+(`ChannelViewModel`). Log completo guardado localmente en
+`docs/logs/unigcs_live_logcat_2026-09-10.txt` (no versionado — son ~1.6MB
+de logcat con IDs de dispositivo; se han extraído aquí los fragmentos
+relevantes).
+
+**Dos hallazgos concretos:**
+
+1. **Sí hay datos de canal reales y en vivo — pero no vienen por el `0x42`
+   documentado.** En cuanto se abrió la pantalla de canales
+   (`SystemSettingViewModel`/`ChannelViewModel`: `requestAllChannelValue`),
+   empezó un stream continuo (~20ms de periodo, 627 frames en ~24s) de
+   `SIYIRemoteControlParser: parseRcCmd, cmdId:1 data:...`, 32 bytes de
+   payload = 16×`int16` LE:
+   ```
+   cmdId:1 data:DC05DC05DC05DC051A041A04DC051A041A041A041A04DC05DC05E8031A041A04
+   → CH1-16: 1500 1500 1500 1500 1050 1050 1500 1050 1050 1050 1050 1500 1500 1000 1050 1050
+   ```
+   Coincide exactamente con el mapeo de canales ya confirmado por `0x48`
+   (CH1-4 joystick J1-J4 centrados en 1500 con los sticks sin tocar,
+   CH5-7 interruptores de 3 posiciones en un valor de detent plausible,
+   etc.) — son valores reales y coherentes, no basura. (Los sticks no se
+   movieron durante la captura, por eso el valor es idéntico en las 627
+   apariciones — no se pudo confirmar variación en vivo, pero la
+   estructura por sí sola ya es una prueba fuerte.)
+
+2. **De dónde sale, confirmado por decompile**:
+   `biz/siyi/pilot/rcuservice/RemoteControlService.java`, en `onCreate()`,
+   construye exactamente **`t5.k`** — la misma clase que implementa
+   *todos* los `CMD_ID` de este documento, documentados y no
+   documentados — pero pasándole un `SerialPort("/dev/ttyHS1", 230400)`,
+   **no** `/dev/ttyHS0` a 115200:
+   ```java
+   dVar.f17194f = "/dev/ttyHS1";
+   dVar.f17191c = 230400;
+   ...
+   aVar2.f17186a = new t5.k(new t5.i(tVar), gVar, tVar);
+   ```
+   Es decir: el protocolo "SIYI Datalink SDK" (framing `55 66`, CRC16,
+   catálogo de `CMD_ID`) **no es exclusivo de la interfaz "externa"
+   documentada en la sección 4.8.3 del manual** (`/dev/ttyHS0`,
+   115200) — la propia app lo habla también, internamente, contra
+   `/dev/ttyHS1` a 230400. Esto explica retroactivamente por qué las
+   capturas en crudo de `ttyHS1` de las primeras sesiones del proyecto
+   (2026-09-07/08, antes de conocer siquiera la sección 4.8) solo veían
+   un heartbeat: la app estaba corriendo pero nadie tenía abierta la
+   pantalla de canales, así que `t5.k` no estaba siendo usado para pedir
+   canales en ese momento — no es que el canal de datos no exista, es
+   que hay que "pedirlo" desde la UI para que empiece a fluir.
+
+   **Sin confirmar todavía**: si los bytes exactos que van por el cable
+   en `ttyHS1` son literalmente tramas `55 66...` (como las que ya
+   probamos a mano en `ttyHS0`) o si hay una capa de framing adicional
+   por debajo — las líneas de log `WriteTask` muestran hex que empieza
+   por `AA 09...`, no por `55 66...` (ej.
+   `AA090200ADEA03D0101060DC8A`), así que **hace falta una captura en
+   crudo de `/dev/ttyHS1` para saber si eso es la trama completa (en
+   cuyo caso el protocolo real de `ttyHS1` no es literalmente el mismo
+   `55 66` del manual, aunque la usen la misma clase `t5.k` y el mismo
+   CRC16) o si hay una re-codificación intermedia para el log**.
+
+**Siguiente paso de hardware, prioridad máxima**: con `biz.siyi.remotecontrol`
+corriendo (imprescindible — el puerto está en silencio si no), intentar
+mandar nuestra propia petición `CMD_ID 0x42` (ya probada y verificada en
+`ttyHS0`) directamente contra **`/dev/ttyHS1` a 230400 baudios** en vez de
+`ttyHS0`/115200, con la misma receta de `adb shell stty` + `printf` +
+`cat` de fondo ya usada en este documento. Dos incógnitas a resolver in
+situ: (a) si el puerto admite una segunda apertura concurrente mientras
+la app ya lo tiene abierto (podría fallar o dar lecturas entremezcladas),
+y (b) si el framing real resulta no ser literalmente `55 66` (ver punto
+anterior), en cuyo caso haría falta decodificar el formato `AA 09...`
+desde cero antes de poder pedir nada por ahí a mano.
+
 ---
 
 ### `0x43` — Request Datalink Status (lectura)
@@ -357,6 +437,18 @@ desde la app "SIYI TX":
 
 ## Ingeniería inversa adicional: APK de UniGCS (decompile completo con jadx)
 
+⚠️ **Aclaración de nombres**: el fichero se llama
+`UniGCS_prod_mk15_32_release_3_1_6_*.apk`, pero **su paquete Android real
+es `biz.siyi.remotecontrol`** (confirmado con `pyaxmlparser`:
+`package: biz.siyi.remotecontrol`, `version: 3.1.6`, actividad principal
+`biz.siyi.pilot.app.HomeActivity`) — es decir, **es literalmente la misma
+app "SIYI TX" que ya estaba instalada** en el mando (misma que se
+actualizó de 1.1.210 a 3.1.6 en la sesión del 2026-09-09), no una app
+"UniGCS" independiente. "UniGCS" es solo el nombre de producto interno
+(`"appName":"UniGCS"` aparece en su propia telemetría). Esto simplificó
+mucho el debug en vivo de la sección de abajo: no hace falta instalar
+nada, la app a depurar ya está en el dispositivo.
+
 Primera pasada (2026-09-09, ver memoria del proyecto) fue solo a nivel de
 `strings` sobre los `.dex` — sin `jadx`/`apktool` instalados no daba para
 más. Sesión posterior: se descargó `jadx 1.5.6` (zip de su release de
@@ -367,10 +459,12 @@ este tamaño). Es una estación de tierra basada en MAVLink
 (`com.divpundir.mavlink`) para volar un dron; el SDK de Datalink de SIYI
 (nuestro protocolo) es solo un rincón (`t5.*`,
 `biz.siyi.protocol.bu.manufacturer.siyi`,
-`biz.siyi.core.rcu.controller.*`, `biz.siyi.pilot.rcuservice.binder.*`).
-Nombres de clase ofuscados (R8) salvo donde el propio proyecto conservó
-un nombre manual (`b5`, `SystemSettingViewModel`,
-`InterConnectionViewModel`...) — esos fueron los anclas para navegar.
+`biz.siyi.core.rcu.controller.*`, `biz.siyi.pilot.rcuservice.binder.*`,
+`biz.siyi.pilot.rcuservice.RemoteControlService`). Nombres de clase
+ofuscados (R8) salvo donde el propio proyecto conservó un nombre manual
+(`b5`, `SystemSettingViewModel`, `InterConnectionViewModel`,
+`RemoteControlService`, `SerialPort`...) — esos fueron los anclas para
+navegar.
 
 Confirmado de nuevo: la tabla CRC16 (`crc16_tab[256]`) es byte a byte
 idéntica a la del manual, y la ruta `/dev/ttyHS3` (vista en la pasada de
