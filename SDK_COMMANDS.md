@@ -58,6 +58,12 @@ CRC correcta.** El único que no responde nada es precisamente el que
 necesitamos para el objetivo real del proyecto (`0x42`, los 16 canales del
 joystick) — ver su sección para las hipótesis abiertas.
 
+Esta tabla cubre solo los comandos **documentados en el manual**
+(sección 4.8.2, `0x40`-`0x4D`). Hay otros ~20 `CMD_ID` que la app oficial
+usa pero que el manual no menciona — ver "Catálogo de `CMD_ID` que usa la
+app y que no están en el manual" más abajo (hallados por decompile con
+`jadx`, ninguno probado aún contra hardware real).
+
 Los 3 comandos de **escritura** (`0x17`, `0x4A`, `0x4D`) se dejaron
 deliberadamente sin probar: modifican estado persistente del equipo real
 (vinculación/bind y baudrate de telemetría, mapeo de canales físicos,
@@ -162,6 +168,26 @@ funciona con otros 9 comandos). Hipótesis sin confirmar, de
    implementarlo aunque esté en el manual genérico de la gama.
 3. Puede necesitar una air unit emparejada para tener canales reales
    que reportar (este banco de pruebas no tiene ninguna).
+4. **Payload vacío en vez de 1 byte `freq`** — la propia app UniGCS
+   pide `0x42` con `Data_len=0` (sin el byte `freq` documentado).
+   Bytes exactos calculados: `55 66 01 00 00 00 00 42 c3 bc`. Sin
+   probar aún contra hardware real (ver hallazgo #5 más abajo —
+   contexto nuevo que hace esta hipótesis menos prioritaria que
+   cuando se planteó).
+5. **Hallazgo nuevo (decompile completo con jadx, ver sección de
+   abajo): en la app real, `0x42` no se usa como un "dame los 16
+   canales" repetible.** Se llama **una sola vez, como primer paso al
+   pulsar "emparejar" en la pantalla de vinculación RF** (analítica
+   `PAIR_START`, `BindingState` pasa de `UNBOUND` a `BINDING`) —
+   `InterConnectionViewModel`/`ui/interconnection/f0.java`,
+   `cVar.y()`. Esto encaja con la hipótesis 3 mejor que con leerlo
+   como un simple "dame canales": puede que `0x42` en este firmware
+   sea semánticamente "inicia/anuncia intención de recibir canales
+   (parte del handshake de bind)" y por eso no responde nada sin una
+   air unit al otro lado intentando emparejar — no un getter
+   stateless. Sigue sin confirmarse contra hardware real (no hay air
+   unit en esta mesa de pruebas), pero es el candidato más fuerte
+   ahora mismo para explicar el silencio.
 
 ---
 
@@ -317,29 +343,97 @@ desde la app "SIYI TX":
 4. **Puerto de actualización RC del MK15 / puerto USB-C del MK32**
    (puerto serie virtual sobre USB).
 
-## Ingeniería inversa adicional: APK de UniGCS
+## Ingeniería inversa adicional: APK de UniGCS (decompile completo con jadx)
 
-Se hizo una pasada de reconocimiento sobre
-`docs/UniGCS_prod_mk15_32_release_3_1_6_*.apk` (la app de estación
-terrestre completa, distinta de "SIYI TX"/`biz.siyi.remotecontrol`),
-extrayendo cadenas de texto de sus `classes.dex`/`classes2.dex` (no hay
-`jadx`/`apktool` instalados en este entorno, así que fue solo a nivel
-de strings, no descompilación completa — se puede profundizar si hace
-falta). Hallazgos:
+Primera pasada (2026-09-09, ver memoria del proyecto) fue solo a nivel de
+`strings` sobre los `.dex` — sin `jadx`/`apktool` instalados no daba para
+más. Sesión posterior: se descargó `jadx 1.5.6` (zip de su release de
+GitHub, sin necesitar root/sudo) y se descompiló
+`docs/UniGCS_prod_mk15_32_release_3_1_6_*.apk` completo (`--no-res -j 4`,
+~20500 ficheros `.java`, 438 errores no fatales — normal en una app de
+este tamaño). Es una estación de tierra basada en MAVLink
+(`com.divpundir.mavlink`) para volar un dron; el SDK de Datalink de SIYI
+(nuestro protocolo) es solo un rincón (`t5.*`,
+`biz.siyi.protocol.bu.manufacturer.siyi`,
+`biz.siyi.core.rcu.controller.*`, `biz.siyi.pilot.rcuservice.binder.*`).
+Nombres de clase ofuscados (R8) salvo donde el propio proyecto conservó
+un nombre manual (`b5`, `SystemSettingViewModel`,
+`InterConnectionViewModel`...) — esos fueron los anclas para navegar.
 
-- Confirma las rutas `/dev/ttyHS0` y `/dev/ttyHS1` ya conocidas, y
-  **revela una tercera: `/dev/ttyHS3`** — no documentada en el manual,
-  posiblemente correspondiente a una de las otras 3 interfaces de la
-  sección 4.8.3 (candidato: el "puerto de actualización RC" virtual
-  sobre USB). Clases relacionadas: `biz.siyi.port.SerialPort`,
-  `SerialPortCommunication`.
-- Claves de UI internas (`page_channel_data`, `page_system_setting`,
-  `channel_reverse`, `CHANNEL_REVERSE_SET`) confirman que esta app
-  implementa conceptualmente los mismos comandos que el manual
-  documenta, pero los nombres de clase están ofuscados (ProGuard/R8:
-  `biz.siyi.protocol.rtsp.a`, `.b`, `.c`...) así que no aportó
-  constantes `CMD_ID` nuevas ni pistas directas sobre cómo activar la
-  salida de canales de `0x42`.
+Confirmado de nuevo: la tabla CRC16 (`crc16_tab[256]`) es byte a byte
+idéntica a la del manual, y la ruta `/dev/ttyHS3` (vista en la pasada de
+strings) es un tercer puerto usado solo en otro modelo SIYI
+(`h0.T3() || h0.S3() ? "/dev/ttyHS3" : "/dev/ttyHS0"`,
+`biz/siyi/pilot/bu/flight/flycontrol/model/o.java:140`) — irrelevante
+para el MK15.
+
+### Catálogo de `CMD_ID` que usa la app y que **no están en el manual**
+
+Encontrados buscando asignaciones al campo `CMD_ID` dentro de la clase
+que construye tramas del protocolo RCU (`t5.e`, la misma que usan los
+comandos ya documentados — `dest=16`/RCU en todos). La mayoría están en
+`biz/siyi/pilot/rcuservice/binder/b5.java`, la clase "binder" de la RCU
+que implementa uno por uno todos los comandos del SDK que la app conoce
+(documentados y no documentados).
+
+**Ninguno de estos se ha probado contra hardware real** — son hallazgos
+de código, no de tráfico capturado. Todos son de **escritura** salvo
+`0x14`/`0x24` (vacíos, se piden solos en cada conexión) y `0x42` (ver
+hallazgo clave arriba). Por el mismo motivo que `0x17`/`0x4A`/`0x4D` ya
+documentados, **no se debería probar ninguno de escritura sin luz verde
+explícita** — algunos (`0x36` auto-frequency, `0x50` modo inalámbrico,
+`0x56` punto de frecuencia) tocan directamente el enlace RF con el
+vehículo.
+
+| `CMD_ID` | Método fuente (`b5.java` salvo que se indique) | Payload | Qué parece hacer |
+|---|---|---|---|
+| `0x09` | `B(RCChannel, boolean)` | canal + flag | Sin contexto claro más allá del nombre de los tipos |
+| `0x0E` | `m2(RCChannel, RCPhysicsEntity)` | canal + (tipo, id) | Mapeo canal→entidad física — parece una variante/precursora del `0x4A` ya documentado |
+| `0x11` | `m(StrokeInfo)` | canal + 2 enteros | Calibración de recorrido ("stroke") de un canal físico (min/max) |
+| `0x14` | `r7.b.P2()`, llamado desde `t5.k.v()` | vacío | Comando de lectura sin nombre — se pide automáticamente en cada conexión, antes que `0x48` |
+| `0x1B` | `P1(boolean)` | 1 byte | Flag genérico, sin más contexto |
+| `0x1D` | `p(OOCProtectInfo)` | canal + `ProtectType` + entero | Configuración de protección "Out Of Control" (failsafe) por canal |
+| `0x24` | `t5.k.v()`, 3ª llamada | vacío | Comando de lectura sin nombre — se pide automáticamente en cada conexión, después de `0x48` |
+| `0x32` | `t(RCButtonType, RCButtonMode)` | 2 bytes (ordinales) | Modo de un botón físico (`LT1-5`/`RT1-4` → `FLIGHT`/`LOCK`/`SWITCH`/`UNLOCK`) |
+| `0x34` | `z1(boolean)` | 2 bytes | Flag genérico, sin más contexto |
+| `0x36` | `E1(AutoFrequencyState)` | 1 byte (`OFF`/`ON`/`SEARCH_OPTIMAL`) | Modo de búsqueda/salto automático de frecuencia RF |
+| `0x3C` | `a1(RCDialWheelAutoCenterInfo)` | tipo de dial + bool + entero | Auto-centrado de un dial/rueda física |
+| `0x44` | `s1(RCPhysicsEntity)` | 2 bytes (tipo, id) | ⚠️ **Conflicto**: el manual documenta `0x44` como lectura "Image Transmission Link Status" (ya confirmado funcionando arriba); aquí se usa como escritura para mapear una entidad física. Mismo `CMD_ID`, semántica distinta — sin resolver cuál prevalece en este firmware, no probar sin más contexto |
+| `0x46` | `i(ArrayList)` | array variable | Probablemente escritura en bloque de varios mapeos/calibraciones a la vez |
+| `0x50` | `f2(WirelessMode)` | 1 byte (`MODE_5/8/15/24KM`) | Selección de modo de alcance/potencia del enlace inalámbrico |
+| `0x54` | `H0(int)` | 1 byte | Parámetro numérico sin contexto claro |
+| `0x56` | `r1(FrequencyPoint)` | 1 byte | Selección manual de canal/punto de frecuencia RF (o `AUTOMATIC`) |
+| `0x58` | `M0(ReceiverChannel)` | 1 byte (`CHANNEL_1..5`) | Selección de canal de receptor (config. multi-receptor) |
+| `0x5A` | `t1(RcOutputMode)` | 1 byte (`OFF`/`PPM`/`SBUS`) | Modo de salida física del RC |
+| `0x5F` | `d2(PWMMapInfo)` | 2 bytes (canal PWM, canal RC) | Mapeo de un canal PWM físico a un canal RC |
+| `0x64` | `A0(RCChannel)` | 1+ bytes | Sin contexto claro adicional |
+| `0x82` | `e1(ExternalSdkConnectType)` | 1 byte (0-6) | Tipo de conexión del "SDK externo" — ver hallazgo clave abajo |
+
+### Hallazgo clave: `0x82` "External SDK Connect Type" — descartado para MK15
+
+`CMD_ID 0x82` (130) escribe un `ExternalSdkConnectType`:
+`A_USB_CONNECT(0)`, `BLU_CONNECT(1)`, `MIC_USB_CONNECT(2)`,
+`UART_CONNECT(3)`, `UDP_CONNECT(4)`, `ASSISTANT_UART(5)`, `CLOSE(6)` —
+sonaba muy prometedor como "el interruptor que falta" para activar
+`0x42`, más allá del toggle "Datalink → Connection → UART" que ya se usa.
+
+Pero `SystemSettingViewModel.java:3348` (el único punto donde la app
+aplica este comando, tras leerlo de un `ExternalSdkConnectConfig`)
+**comprueba el `DeviceType` primero y sale sin hacer nada si no es
+`UNIRC7` o `UNIRC10`**:
+```java
+if ((deviceType != DeviceType.UNIRC7 && deviceType != DeviceType.UNIRC10)
+        || externalSdkConnectConfig == null) {
+    return d0Var;   // no-op
+}
+```
+Y `DeviceType.MK15` tiene valor `"68"` — **el mismo product code `0x68`
+que ya confirmamos que devuelve nuestro propio `0x47`/`0x40` en el
+hardware real de este proyecto**. Es decir: este comando/pantalla
+concreta de "External SDK" **no aplica al MK15** en esta versión de la
+app — no es el interruptor que falta, y no vale la pena perseguir esta
+pista más (aunque el `CMD_ID` en sí podría seguir siendo válido para
+otros mandos SIYI, `UNIRC7`/`UNIRC10`).
 
 ## Referencia: verificación de CRC de todos los ejemplos del manual
 
