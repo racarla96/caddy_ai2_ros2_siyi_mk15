@@ -107,18 +107,33 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 > sessions (`00`/`03`/`0b`/`0c` different times) are both explained by the
 > counter-width correction above, not by firmware/protocol drift.
 >
-> **Still open**: what exactly *triggers* the RCU to start streaming
-> `0x20/0x01` isn't captured yet — a read-only `cat` of the port only sees
-> MCU→app traffic, not whatever request the app itself writes out when that
-> screen opens. `RemoteControlService.onCreate()` (decompiled from the real
-> app, see `SDK_COMMANDS.md`) constructs `t5.k` — the same class implementing
-> every `CMD_ID` in `SDK_COMMANDS.md` — against this exact port/baud, so the
-> likely mechanism is a `t5.e`-built request frame, just not necessarily in
-> the `55 66`-framed encoding documented in the manual's section 4.8 (this
-> port's observed traffic is unmistakably `AA 0A 02`-framed, not `55 66`).
-> Next step: capture both directions at once (e.g. `strace`-style write
-> logging, or correlating `WriteTask` logcat lines against a simultaneous raw
-> capture) to catch the actual outgoing request frame.
+> **Confirmed end-to-end on real hardware (2026-09-10/11, same session)**:
+> installed the actual app on the MK15, opened the vendor app's channel
+> screen once to trigger streaming, then switched to our app — its own
+> `SiyiSerialReader`→`FrameParser` pipeline (with the fix above) processed
+> **2287 real frames, 0 CRC errors, 0 resyncs** in one run, confirmed live
+> on-screen via the app's own stats readout. Bonus finding: streaming
+> **doesn't stop when the triggering vendor screen loses foreground** — it
+> kept going for well over a minute with that app backgrounded, so nothing
+> needs to keep it open once triggered.
+>
+> **Still open (low priority — doesn't block anything now)**: what exactly
+> *triggers* the RCU to start streaming `0x20/0x01` in the first place isn't
+> captured yet — a read-only `cat` of the port only sees MCU→app traffic, not
+> whatever request the app itself writes out when that screen opens.
+> `RemoteControlService.onCreate()` (decompiled from the real app, see
+> `SDK_COMMANDS.md`) constructs `t5.k` — the same class implementing every
+> `CMD_ID` in `SDK_COMMANDS.md` — against this exact port/baud, so the likely
+> mechanism is a `t5.e`-built request frame, just not necessarily in the
+> `55 66`-framed encoding documented in the manual's section 4.8 (this port's
+> observed traffic is unmistakably `AA 0A 02`-framed, not `55 66`). Worth
+> resolving eventually so a real deployment doesn't depend on a human having
+> opened that vendor screen at least once since boot, but since streaming
+> persists indefinitely once started, it's not an active blocker. Next step
+> if/when picked back up: capture both directions at once (e.g.
+> `strace`-style write logging, or correlating `WriteTask` logcat lines
+> against a simultaneous raw capture) to catch the actual outgoing request
+> frame.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's

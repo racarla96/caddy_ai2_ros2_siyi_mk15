@@ -111,15 +111,25 @@ being dropped in flight.
 
 ## Status / known limitations
 
+- **Full on-device protocol validation done (2026-09-10/11)**: ran the real
+  app on the real MK15 — `SiyiSerialReader` → `FrameParser` (with the header
+  fix below) → `ChannelMapper` → `BicycleTwistComputer` →
+  `TwistCmdVelPublisher` processed **2287 real hardware frames, 0 CRC
+  errors, 0 resyncs** in a single session. Also found (empirically, not by
+  design) that once the RCU starts streaming channel data — triggered by
+  opening the vendor app's channel-data screen at least once — it keeps
+  streaming regardless of what's in the Android foreground afterward, so
+  nothing needs to keep that vendor screen open. The one remaining
+  real-hardware milestone for the whole project is confirming the DDS
+  `Twist` reaches the companion ROS 2 robot stack over WiFi — everything
+  upstream of that is now validated.
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
   `assembleDebug` produces an installable APK. `FrameParser`'s header
-  layout is now validated against a real hardware-captured `0x20/0x01`
-  frame (`FrameParserTest.decodesARealHardwareCapturedChannelFrame`) — this
+  layout is validated against a real hardware-captured `0x20/0x01` frame
+  (`FrameParserTest.decodesARealHardwareCapturedChannelFrame`) — this
   caught and fixed a real bug (see PROTOCOL.md's 2026-09-10/11 correction)
   that would have silently rejected every real channel frame the app ever
-  saw. Still outstanding: running the actual app on-device against live
-  `/dev/ttyHS1` traffic (via `SiyiSerialReader`, not a raw capture) and the
-  actual DDS link end-to-end.
+  saw, confirmed by the on-device run above.
 - `SiyiSerialReader` opens `/dev/ttyHS1` with a plain `FileInputStream`,
   relying on the vendor's own `biz.siyi.remotecontrol` service having
   already configured the UART (230400 8N1 — see PROTOCOL.md's Transport
