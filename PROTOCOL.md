@@ -28,6 +28,27 @@ The implementation lives under
   frames at all" most likely means that service hasn't started yet, not a
   transport bug — check with `adb shell ps -A | grep -i siyi` and, if
   needed, `adb shell am start -n biz.siyi.remotecontrol/.ui.SplashActivity`.
+- On top of the service being alive, the RCU only *streams* `0x20/0x01`
+  channel frames after something has asked it to at least once — empirically,
+  opening the vendor app's own channel-data screen. It then keeps streaming
+  indefinitely regardless of what's in the Android foreground afterward (see
+  "Confirmed end-to-end on real hardware" further down) — so this is a
+  one-time kickstart per RCU connection/boot, not a standing requirement, but
+  it is still a real, unautomated dependency today.
+
+### `/dev/ttyHS0` vs `/dev/ttyHS1` — two unrelated interfaces, easy to conflate
+
+This project investigated both over its lifetime; they're easy to confuse
+since both ultimately talk to the same underlying radio-control unit. They
+are **not** two views of the same data — different physical purpose,
+different protocol, different one talks to whom:
+
+| | `/dev/ttyHS1` (this doc, 230400 baud) | `/dev/ttyHS0` (115200 baud) |
+|---|---|---|
+| **Purpose** | *Internal* link: the handset's own Android SoC talking to the joystick/switch/dial microcontroller built into the same handset | *External* interface: the manual's documented "SIYI Datalink SDK" (section 4.8), meant for an outboard companion computer to talk to the handset over a cable/USB/Bluetooth |
+| **Protocol** | `AA 0A 02`-framed, **not** published by SIYI — entirely reverse-engineered by this project (this whole document) | `55 66`-framed, officially documented, with its own `CMD_ID` catalog — see `SDK_COMMANDS.md` |
+| **Activation** | Automatic as soon as `biz.siyi.remotecontrol`'s service is running (see above) — it's traffic internal to the handset | Only active once "Datalink → Connection → UART" is picked by hand in the vendor app's own UI — it's meant to be exposed outward |
+| **Used by this app?** | **Yes — this is what `SiyiSerialReader` reads.** Natural choice since this app runs *inside* the handset's own Android, not as an external device. | No. Investigated in parallel (see `SDK_COMMANDS.md`) because it looked like the "official" path — 9 of 10 read commands work, but the one that mattered (`0x42`, request channel data) never responded. Turned out to be a dead end for this project's purposes, at least so far; `ttyHS1` is what's actually delivering real data. |
 
 ## Frame layout
 

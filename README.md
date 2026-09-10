@@ -16,7 +16,9 @@ link the MK15 already uses for video/telemetry — no ROS 2 install, no
 See [PROTOCOL.md](PROTOCOL.md) for the reverse-engineered wire format this
 reads, and the class Javadocs under
 `android/app/src/main/java/com/caddyai2/siyimk15teleop/` for how each stage
-works.
+works. The handset actually exposes two unrelated serial interfaces,
+`/dev/ttyHS0` and `/dev/ttyHS1` — see PROTOCOL.md's "`/dev/ttyHS0` vs
+`/dev/ttyHS1`" table for which is which and why this app uses `ttyHS1`.
 
 ## Why this exists
 
@@ -84,6 +86,19 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
   `WifiManager.MulticastLock` for as long as it's running — without it, many
   Android WiFi stacks silently drop multicast frames and discovery never
   completes.
+- **Currently depends on the vendor app (`biz.siyi.remotecontrol`, "SIYI
+  TX")**, in two ways, confirmed on real hardware (2026-09-10/11):
+  1. Its `:rcuservice` background process must be running — `/dev/ttyHS1`
+     sits idle at 9600 baud and carries nothing at all otherwise (this is
+     the vendor service that reconfigures it to 230400 8N1).
+  2. Someone has to open that app's own channel-data screen **at least
+     once** to make the handset's RC microcontroller start streaming
+     `0x20/0x01` channel frames in the first place — not yet automated or
+     replicated by this app. Once started, though, streaming keeps going
+     indefinitely even with SIYI TX backgrounded, so it's a one-time
+     kickstart, not something that has to stay open. See PROTOCOL.md's
+     "Confirmed end-to-end on real hardware" note for the evidence and the
+     still-open question of what the actual trigger command is.
 
 ## Configuration
 
