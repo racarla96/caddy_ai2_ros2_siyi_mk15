@@ -174,11 +174,26 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 > `ttyHS1`'s `AA 0A 02` framing — this is the abstract `t5.e` layer, and how
 > `f11160k`(dest)/`f11161l`(CMD_ID) map onto the wire's `type`/`sub_id` bytes
 > for *this* port isn't nailed down yet (unlike `ttyHS0`'s `55 66` framing,
-> which is documented). Now that the exact trigger call and its two literal
-> payloads (`[0x01]`/`[0x00]`) are known, the next raw capture is much more
-> targeted: correlate a `WriteTask` logcat line against a live capture at
-> the precise moment a channel screen opens (or closes), rather than
-> guessing. Not an active blocker either way — see above.
+> which is documented). This is a decompile-derived finding, not yet
+> confirmed against real traffic — treat it as a strong hypothesis, not a
+> fact, until captured. **Plan for the next hardware session** (agreed
+> 2026-09-11, not yet run):
+> 1. Start a background raw capture of `/dev/ttyHS1` (same `adb shell cat`
+>    recipe used throughout this doc).
+> 2. At the same time, capture `adb logcat` filtered to (or just grepped
+>    for, after the fact) the `WriteTask` tag — it logs the app's own
+>    outgoing writes as hex, as already seen in earlier sessions.
+> 3. Open SIYI TX's channel-data screen — per the trace above this fires
+>    `h3.a.b(true)` → `CMD_ID 1`, payload `[0x01]`.
+> 4. Close it — fires `b(false)` → same `CMD_ID 1`, payload `[0x00]`.
+> 5. Correlate the `WriteTask` line timestamps against the raw capture to
+>    isolate the exact "enable"/"disable" request frames byte-for-byte.
+>
+> Once confirmed, the payoff is real: replicate that exact write from our
+> own app on startup and stop depending on a human having opened SIYI TX's
+> channel screen at all — closing the dependency noted in README's
+> "Runtime requirements". Not an active blocker today either way — see
+> above, streaming already works once triggered by any means.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's
