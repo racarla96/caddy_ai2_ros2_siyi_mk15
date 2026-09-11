@@ -210,18 +210,67 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 > streaming was genuinely live throughout, confirming this write-frame
 > family is the right one and not a red herring.
 >
-> **Payoff, now buildable**: our own app can send the `start` frame (byte 6
-> = `0x01`, any tolerable counter value, CRC recomputed with `Crc16`) once
-> on `SiyiSerialReader`/its own `ttyHS1` link open, to trigger streaming
-> without depending on a human ever opening SIYI TX's channel screen —
-> closes the dependency noted in README's "Runtime requirements". Not
-> implemented yet — this session captured and confirmed the bytes only;
-> writing `ttyHS1` from our own reader (currently read-only,
-> `FileInputStream`-based) is the next concrete step, and would need
-> either switching to a `RandomAccessFile`/similar bidirectional handle
-> (as `sdk/SdkSerialLink.java` already does for `ttyHS0`) or opening a
-> second write-only descriptor on the same device node — not yet decided
-> which.
+> **Implemented (2026-09-11, same day), on-device tested, still not confirmed
+> working end-to-end**: `protocol/ChannelStreamControl.java` builds this
+> frame (unit-tested byte-for-byte against the real captures above,
+> `ChannelStreamControlTest`); `SiyiSerialReader` sends it on every connect.
+> Getting a reliable trigger from our own app took several rounds of
+> on-device iteration, across **4 full power-cycles** (not `adb reboot` —
+> see below):
+> 1. **The RCU is a separate chip from the Android SoC and keeps its own
+>    streaming state across an Android-only `adb reboot`.** Discovered when
+>    a "cold" test right after `adb reboot` showed channel frames already
+>    flowing before anything had triggered them that "boot" — the RCU had
+>    simply never lost the state from before the reboot. A genuine cold
+>    test needs a full power-cycle (power off, wait, power on).
+>    `biz.siyi.remotecontrol:rcuservice` auto-starts at boot on its own
+>    (confirms `ttyHS1` to 230400 baud immediately) without needing its UI
+>    ever opened — a true cold, power-cycled state shows *only* heartbeat
+>    (`type=0x01 sub_id=0x60`) traffic, no `0x20/0x01` channel frames, until
+>    something sends the start command.
+> 2. Sending the start frame **once**, via `RandomAccessFile.write()` on the
+>    same file the reader already has open, did not trigger streaming on a
+>    genuine cold boot — plausibly lost a race against `rcuservice`'s own
+>    ~1Hz heartbeat write on the same device node (no arbitration between
+>    concurrent writers on a raw serial port).
+>    A tight burst of 5 such writes 300ms apart, sent before the read loop
+>    even started, **also failed** on a fresh cold boot.
+> 3. Retried with 5 writes spaced 3s apart (~12s total), running
+>    concurrently with the read loop instead of blocking it (stopping early
+>    the moment a real channel frame is observed) — confirmed via added
+>    logging that all 5 attempts genuinely executed on schedule with no
+>    exception or hang, and this **also failed** to trigger streaming on
+>    yet another cold boot.
+> 4. Meanwhile, manually resending the identical frame bytes via separate
+>    `adb shell "printf ... > /dev/ttyHS1"` invocations (confirmed
+>    byte-correct with `od`) **did** trigger streaming, more than once,
+>    including as a retried burst. Checked and ruled out as the explanation
+>    for the Java-vs-shell gap: `/dev/ttyHS1` is world-writable
+>    (`crwxrwxrwx system:system`) and this device's SELinux is in
+>    **permissive** mode, so neither DAC permissions nor the vendor
+>    process's higher-privilege `system_app`/`system` UID (vs. this app's
+>    plain `untrusted_app`) blocks anything. **The actual root cause of the
+>    Java-vs-shell gap was not found** — candidates not yet tested:
+>    `RandomAccessFile`'s `open()` flags subtly affecting tty line
+>    discipline on this driver, Android-specific I/O buffering, or
+>    something else. Given 4 power-cycles already spent in one session, the
+>    pragmatic fix taken was to stop guessing and reproduce the recipe
+>    already proven to work: `SiyiSerialReader.sendStartFrameViaShell` now
+>    shells out to the same `printf ... > /dev/ttyHS1` invocation (via
+>    `ProcessBuilder`) instead of writing through the open file, still
+>    retried up to 5×/3s apart and stopping early on a real channel frame.
+>
+> **This shell-based version has not yet been tested cold on real
+> hardware** — built and unit-tested (JVM-only, `ChannelStreamControlTest`
+> unaffected by this change) at the end of a session with no more device
+> time available. **Next hardware session, in priority order**: (1) full
+> power-cycle the MK15, confirm cold state (heartbeat only), launch the app,
+> and check whether `frames válidos` starts climbing within ~12s — if yes,
+> this closes the README "Runtime requirements" dependency for good; if the
+> shell-exec approach *also* fails cold, the Java-vs-shell root cause needs
+> actual investigation (e.g. comparing `strace`/`ltrace` of both paths, if
+> available, or testing whether even a `ProcessBuilder`-run `cat` frame
+> read behaves differently from `RandomAccessFile.read()` as a control).
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's
