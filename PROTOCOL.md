@@ -170,30 +170,58 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 > `e(int, boolean, boolean)` → `CMD_ID 0x84`/"setMultiAirUnitMode" — noted
 > for completeness, not chased further.)
 >
-> **Still not captured**: the actual bytes-on-the-wire for `CMD_ID 0x01` in
-> `ttyHS1`'s `AA 0A 02` framing — this is the abstract `t5.e` layer, and how
-> `f11160k`(dest)/`f11161l`(CMD_ID) map onto the wire's `type`/`sub_id` bytes
-> for *this* port isn't nailed down yet (unlike `ttyHS0`'s `55 66` framing,
-> which is documented). This is a decompile-derived finding, not yet
-> confirmed against real traffic — treat it as a strong hypothesis, not a
-> fact, until captured. **Plan for the next hardware session** (agreed
-> 2026-09-11, not yet run):
-> 1. Start a background raw capture of `/dev/ttyHS1` (same `adb shell cat`
->    recipe used throughout this doc).
-> 2. At the same time, capture `adb logcat` filtered to (or just grepped
->    for, after the fact) the `WriteTask` tag — it logs the app's own
->    outgoing writes as hex, as already seen in earlier sessions.
-> 3. Open SIYI TX's channel-data screen — per the trace above this fires
->    `h3.a.b(true)` → `CMD_ID 1`, payload `[0x01]`.
-> 4. Close it — fires `b(false)` → same `CMD_ID 1`, payload `[0x00]`.
-> 5. Correlate the `WriteTask` line timestamps against the raw capture to
->    isolate the exact "enable"/"disable" request frames byte-for-byte.
+> **Confirmed on the wire (2026-09-11, hardware session)**: ran the plan
+> above for real. Cleared logcat, started a background `adb shell timeout
+> 90 cat /dev/ttyHS1 > hs1_raw.bin` capture plus a parallel host-side
+> `adb logcat -v time`, then opened SIYI TX's channel-data screen three
+> times (the app got restarted between opens, visible as new `WriteTask`
+> PIDs — 2614, then 6210, 6386). Found the write-direction frame this app
+> sends for `CMD_ID 0x01` — note this is a **different sync/header** than
+> the `AA 0A 02` read-direction frame format documented above; the app's
+> own *outgoing* (write) frames on `ttyHS1` use `AA 09 02` instead:
+> ```
+> AA 09 02 01 <ctrHi> <ctrLo> <01=start|00=stop> D0 10 10 01 01 <CRC16 LE>
+> ```
+> Five real, CRC-16/XMODEM-verified (same algorithm as `Crc16.java`, over
+> every byte except the trailing 2) examples captured via `WriteTask`:
+> ```
+> start: AA 09 02 01 F3 17 01 D0 10 10 01 01 7C 34
+> start: AA 09 02 01 F3 1C 01 D0 10 10 01 00 72 6F
+> start: AA 09 02 01 F3 1D 01 D0 10 10 01 01 32 C7
+> stop:  AA 09 02 01 F3 15 00 D0 10 10 01 01 3F 11
+> stop:  AA 09 02 01 F3 17 00 D0 10 10 01 01 DC 71
+> ```
+> Byte-by-byte: `AA 09 02` sync (fixed for this write-frame kind — distinct
+> from the read-direction `AA 0A 02`/heartbeat-write `AA 09 02 00...`
+> sync); byte 3 = `01` marks a "command, ack requested" write (heartbeats,
+> also captured in the same session, use `AA 09 02 00 ...` — byte 3 `00`
+> — and don't carry this field); bytes 4-5 = a 2-byte running counter
+> (doesn't reset across the enable/disable pair, only across app
+> restarts — exact meaning not pinned down, doesn't need to be to
+> replicate this); **byte 6 is the payload — `0x01` to start streaming,
+> `0x00` to stop**, cleanly split across all 5 samples along the observed
+> open/close timeline; bytes 7-9 `D0 10 10` and byte 10 `01` fixed
+> (plausibly encoding `dest=16`/`CMD_ID=1` from the `t5.e` layer, though
+> the exact sub-byte mapping wasn't reverse-engineered further since it's
+> not needed to replicate the write); byte 11 is `01` in 4/5 samples,
+> `00` in one — unexplained, likely inconsequential (didn't correlate
+> with anything); last 2 bytes = CRC16 (LE). Raw capture over the same
+> window showed 2661 valid `0x20/0x01` channel frames (0 CRC errors) —
+> streaming was genuinely live throughout, confirming this write-frame
+> family is the right one and not a red herring.
 >
-> Once confirmed, the payoff is real: replicate that exact write from our
-> own app on startup and stop depending on a human having opened SIYI TX's
-> channel screen at all — closing the dependency noted in README's
-> "Runtime requirements". Not an active blocker today either way — see
-> above, streaming already works once triggered by any means.
+> **Payoff, now buildable**: our own app can send the `start` frame (byte 6
+> = `0x01`, any tolerable counter value, CRC recomputed with `Crc16`) once
+> on `SiyiSerialReader`/its own `ttyHS1` link open, to trigger streaming
+> without depending on a human ever opening SIYI TX's channel screen —
+> closes the dependency noted in README's "Runtime requirements". Not
+> implemented yet — this session captured and confirmed the bytes only;
+> writing `ttyHS1` from our own reader (currently read-only,
+> `FileInputStream`-based) is the next concrete step, and would need
+> either switching to a `RandomAccessFile`/similar bidirectional handle
+> (as `sdk/SdkSerialLink.java` already does for `ttyHS0`) or opening a
+> second write-only descriptor on the same device node — not yet decided
+> which.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's

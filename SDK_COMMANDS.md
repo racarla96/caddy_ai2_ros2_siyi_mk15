@@ -293,6 +293,21 @@ por qué no responde), pero para el objetivo real del proyecto (canales del
 joystick) **ya no es el camino bloqueante** — `ttyHS1` con el protocolo
 viejo lo es, y ya está funcionando.
 
+**Actualización 2026-09-11 — bytes reales del `CMD_ID 0x01` (start/stop
+streaming) capturados vía `WriteTask`**: con el mando conectado, captura
+en paralelo de `adb logcat` + captura cruda de `/dev/ttyHS1` mientras se
+abría la pantalla de canales de SIYI TX tres veces. Confirmado que las
+tramas de *escritura* en `ttyHS1` usan una sincronización distinta a la
+de lectura: `AA 09 02` (no `AA 0A 02`). Formato:
+`AA 09 02 01 <ctr:2> <01=start|00=stop> D0 10 10 01 01 <CRC16 LE>`, CRC
+verificado a mano con el mismo algoritmo de `Crc16.java` sobre las 5
+muestras capturadas. Detalle byte a byte en **PROTOCOL.md**, sección
+"Trigger identified by decompile" (ahora "Confirmed on the wire"). Aún no
+implementado en la app propia — el siguiente paso es que
+`SiyiSerialReader` (hoy solo lectura) también pueda escribir este frame
+al abrir el puerto, para no depender de que un humano abra la pantalla de
+canales de SIYI TX ni una sola vez.
+
 ---
 
 ### `0x43` — Request Datalink Status (lectura)
