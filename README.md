@@ -207,6 +207,17 @@ being dropped in flight.
   protocol diagnostics out into their own `DiagnosticsActivity` screen,
   and made all three activities run fullscreen/immersive. See
   `DiagnosticsState`'s Javadoc for how the two screens share live data.
+- **Fixed the app silently pausing after a few minutes (2026-09-14)**:
+  `MainActivity.onStop()` deliberately stops `SiyiSerialReader`/
+  `SteeringReferencePublisher` — and Android calls `onStop()` the moment
+  the screen times out from inactivity and dims/locks, which happens
+  within a couple of minutes on an idle handset by default. From the
+  operator's side that looked exactly like a freeze: the UI stopped
+  updating and the robot stopped receiving commands, no error shown.
+  `FullscreenHelper` (already applied by all three activities) now also
+  sets `FLAG_KEEP_SCREEN_ON`, so the timeout never fires while this app
+  is in the foreground. Verified live: forced `screen_off_timeout` down
+  to 8s, screen stayed on and the app stayed "Conectado" past 12s.
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
   `assembleDebug` produces an installable APK. `FrameParser`'s header
   layout is validated against a real hardware-captured `0x20/0x01` frame
