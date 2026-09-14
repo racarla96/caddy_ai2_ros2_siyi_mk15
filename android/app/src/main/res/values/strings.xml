@@ -1,32 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SIYI MK15 Teleop</string>
-    <string name="status_disconnected">Desconectado de /dev/ttyHS1</string>
-    <string name="status_connected">Conectado a /dev/ttyHS1</string>
-    <string name="status_error">Error: %1$s</string>
-    <string name="channels_format">%1$s\nnorm: steer(CH1)=%2$.2f  throttle(CH3)=%3$.2f</string>
+    <string name="status_disconnected_short">Desconectado</string>
+    <string name="status_connected_short">Conectado</string>
+    <string name="status_error_short">Error</string>
     <string name="label_linear_x">linear.x</string>
     <string name="label_angular_z">angular.z</string>
     <string name="value_mps">%1$.2f m/s</string>
     <string name="value_radps">%1$.2f rad/s</string>
-    <string name="label_valid_frames">frames válidos</string>
-    <string name="label_crc_errors">crc_err</string>
-    <string name="label_resyncs">resyncs</string>
+    <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
     <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
     <string name="unknown_frames_none">ninguno</string>
-    <string name="diagnostics_show">▾ Diagnóstico avanzado</string>
-    <string name="diagnostics_hide">▴ Ocultar diagnóstico avanzado</string>
+    <string name="diagnostics_open">▾ Diagnóstico avanzado</string>
+    <string name="diagnostics_title">Diagnóstico avanzado</string>
+    <string name="diagnostics_back">← Volver</string>
 
     <string name="log_title">Log</string>
     <string name="settings_button">⚙ Ajustes</string>
     <string name="sdk_test_button">Probar SDK (fw)</string>
-    <string name="sdk_channels_test_button">Probar canales</string>
 
     <string name="settings_title">Ajustes de teleoperación</string>
     <string name="settings_profiles_subtitle">3 perfiles de conducción, seleccionados en vivo con el interruptor CH7 del mando</string>
-    <string name="settings_profile_low_header">Perfil 1 — CH7 abajo</string>
+    <string name="settings_profile_low_header">Perfil 1 — CH7 izquierda</string>
     <string name="settings_profile_mid_header">Perfil 2 — CH7 centro</string>
-    <string name="settings_profile_high_header">Perfil 3 — CH7 arriba</string>
+    <string name="settings_profile_high_header">Perfil 3 — CH7 derecha</string>
     <string name="settings_label_profile_name">Nombre del perfil</string>
     <string name="settings_label_max_steer">Ángulo de dirección máximo (°)</string>
     <string name="settings_label_max_speed">Velocidad máxima (m/s)</string>

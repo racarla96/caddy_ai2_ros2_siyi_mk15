@@ -7,6 +7,7 @@ import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.caddyai2.siyimk15teleop.config.TeleopConfig;
+import com.caddyai2.siyimk15teleop.util.FullscreenHelper;
 
 /**
  * Edits the {@link TeleopConfig} values in place (SharedPreferences-backed, no
@@ -54,6 +55,7 @@ public class SettingsActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        FullscreenHelper.apply(this);
         setContentView(R.layout.activity_settings);
         config = new TeleopConfig(this);
 
@@ -73,6 +75,14 @@ public class SettingsActivity extends AppCompatActivity {
         findViewById(R.id.saveButton).setOnClickListener(v -> save());
         findViewById(R.id.cancelButton).setOnClickListener(v -> finish());
         findViewById(R.id.restoreDefaultsButton).setOnClickListener(v -> restoreDefaults());
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            FullscreenHelper.apply(this);
+        }
     }
 
     private void loadCurrentValues() {
