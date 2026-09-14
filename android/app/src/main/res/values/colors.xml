@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark, technical palette for a field-operator tool (used outdoors, on a handset screen,
+         status legible at a glance) rather than a light "testing app" look. -->
+    <color name="background">#0F1216</color>
+    <color name="surface">#1B2027</color>
+    <color name="surface_variant">#242B34</color>
+    <color name="outline">#33414E</color>
+
+    <color name="on_background">#ECEFF4</color>
+    <color name="on_surface">#ECEFF4</color>
+    <color name="on_surface_secondary">#9AA7B4</color>
+
+    <color name="primary">#29B6F6</color>
+    <color name="on_primary">#00121A</color>
+
+    <color name="status_connected">#4CAF50</color>
+    <color name="status_disconnected">#78828C</color>
+    <color name="status_error">#EF5350</color>
+
+    <!-- Matches the CH7 switch-position dot colors used in SettingsActivity's profile cards. -->
+    <color name="profile_low">#4CAF50</color>
+    <color name="profile_mid">#FF9800</color>
+    <color name="profile_high">#2196F3</color>
+</resources>

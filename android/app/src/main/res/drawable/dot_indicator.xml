@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain circle, tinted at runtime (MainActivity sets its background tint per connection
+     state) rather than duplicated as separate colored drawables. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/status_disconnected" />
+    <size android:width="12dp" android:height="12dp" />
+</shape>

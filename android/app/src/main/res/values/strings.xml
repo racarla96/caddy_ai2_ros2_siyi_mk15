@@ -5,11 +5,17 @@
     <string name="status_connected">Conectado a /dev/ttyHS1</string>
     <string name="status_error">Error: %1$s</string>
     <string name="channels_format">%1$s\nnorm: steer(CH1)=%2$.2f  throttle(CH3)=%3$.2f</string>
-    <string name="twist_format">Twist -&gt; linear.x=%1$.2f m/s  angular.z=%2$.2f rad/s</string>
-    <string name="profile_format">Perfil: %1$s (CH7)</string>
-    <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
+    <string name="label_linear_x">linear.x</string>
+    <string name="label_angular_z">angular.z</string>
+    <string name="value_mps">%1$.2f m/s</string>
+    <string name="value_radps">%1$.2f rad/s</string>
+    <string name="label_valid_frames">frames válidos</string>
+    <string name="label_crc_errors">crc_err</string>
+    <string name="label_resyncs">resyncs</string>
     <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
     <string name="unknown_frames_none">ninguno</string>
+    <string name="diagnostics_show">▾ Diagnóstico avanzado</string>
+    <string name="diagnostics_hide">▴ Ocultar diagnóstico avanzado</string>
 
     <string name="log_title">Log</string>
     <string name="settings_button">⚙ Ajustes</string>

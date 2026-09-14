@@ -66,14 +66,29 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private SiyiSerialReader serialReader;
     private WifiManager.MulticastLock multicastLock;
 
+    private View statusDot;
     private TextView statusText;
     private TextView channelsText;
-    private TextView twistText;
+    private View profileDot;
     private TextView profileText;
-    private TextView statsText;
+    private TextView linearXText;
+    private TextView angularZText;
+    private TextView validFramesText;
+    private TextView crcErrorsText;
+    private TextView resyncsText;
     private TextView unknownFramesText;
     private TextView logText;
     private ScrollView logScrollView;
+    private Button diagnosticsToggleButton;
+    private View diagnosticsContainer;
+    private boolean diagnosticsExpanded = false;
+
+    // Matches the dot colors used in SettingsActivity's profile cards (green/amber/blue for
+    // CH7 low/mid/high) -- kept as drawable resource IDs rather than tinting one shared
+    // drawable, since each is genuinely a different shape resource already used there.
+    private static final int[] PROFILE_DOT_DRAWABLES = {
+            R.drawable.dot_profile_low, R.drawable.dot_profile_mid, R.drawable.dot_profile_high
+    };
 
     private final AtomicLong validFrames = new AtomicLong();
     private final AtomicLong crcErrors = new AtomicLong();
@@ -110,16 +125,25 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
+        statusDot = findViewById(R.id.statusDot);
         statusText = findViewById(R.id.statusText);
         channelsText = findViewById(R.id.channelsText);
-        twistText = findViewById(R.id.twistText);
+        profileDot = findViewById(R.id.profileDot);
         profileText = findViewById(R.id.profileText);
-        statsText = findViewById(R.id.statsText);
+        linearXText = findViewById(R.id.linearXText);
+        angularZText = findViewById(R.id.angularZText);
+        validFramesText = findViewById(R.id.validFramesText);
+        crcErrorsText = findViewById(R.id.crcErrorsText);
+        resyncsText = findViewById(R.id.resyncsText);
         unknownFramesText = findViewById(R.id.unknownFramesText);
         logText = findViewById(R.id.logText);
         logScrollView = findViewById(R.id.logScrollView);
         findViewById(R.id.settingsButton).setOnClickListener(
                 v -> startActivity(new Intent(this, SettingsActivity.class)));
+
+        diagnosticsToggleButton = findViewById(R.id.diagnosticsToggleButton);
+        diagnosticsContainer = findViewById(R.id.diagnosticsContainer);
+        diagnosticsToggleButton.setOnClickListener(v -> toggleDiagnostics());
         sdkTestButton = findViewById(R.id.sdkTestButton);
         sdkTestButton.setOnClickListener(v ->
                 runSdkTest("FirmwareVersion", FirmwareVersion.encodeRequest()));
@@ -141,6 +165,13 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                     profiles[i].maxSpeedMps);
         }
         activeProfileIndex = -1; // force the first onFrame to log the initial profile
+    }
+
+    private void toggleDiagnostics() {
+        diagnosticsExpanded = !diagnosticsExpanded;
+        diagnosticsContainer.setVisibility(diagnosticsExpanded ? View.VISIBLE : View.GONE);
+        diagnosticsToggleButton.setText(diagnosticsExpanded
+                ? R.string.diagnostics_hide : R.string.diagnostics_show);
     }
 
     private void acquireMulticastLock() {
@@ -205,6 +236,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     public void onConnected() {
         runOnUiThread(() -> {
             statusText.setText(R.string.status_connected);
+            tintDot(statusDot, R.color.status_connected);
             appendLog("Conectado a " + SiyiSerialReader.DEVICE_PATH);
         });
     }
@@ -214,8 +246,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         runOnUiThread(() -> {
             statusText.setText(error == null ? getString(R.string.status_disconnected)
                     : getString(R.string.status_error, error.getMessage()));
+            tintDot(statusDot, error == null ? R.color.status_disconnected : R.color.status_error);
             appendLog("Desconectado" + (error == null ? "" : ": " + error));
         });
+    }
+
+    /** Tints a dot indicator's drawable background. Must be called on the UI thread. */
+    private void tintDot(View dot, int colorRes) {
+        dot.getBackground().mutate().setTint(getColor(colorRes));
     }
 
     @Override
@@ -230,21 +268,32 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         double throttleNorm = channelMapper.normalizeThrottle(channels);
 
         int profileIndex = channelMapper.profileSwitchPosition(channels);
+        // appendLog()/setText() touch views -- must run on the UI thread. onFrame() itself runs
+        // on SiyiSerialReader's background read thread (see the CalledFromWrongThreadException
+        // this crashed with before this fix), so only compute what changed here and defer every
+        // view mutation, including the log line below, into the runOnUiThread block.
+        String profileChangeLog = null;
         if (profileIndex != activeProfileIndex) {
             activeProfileIndex = profileIndex;
             TeleopConfig.Profile p = profiles[profileIndex];
-            appendLog(String.format(Locale.getDefault(),
+            profileChangeLog = String.format(Locale.getDefault(),
                     "Perfil activo: %s (maxSteer=%.1f° maxSpeed=%.2fm/s, CH7)",
-                    p.name, p.maxSteerAngleDeg, p.maxSpeedMps));
+                    p.name, p.maxSteerAngleDeg, p.maxSpeedMps);
         }
         BicycleTwistComputer.Twist twist = twistComputers[profileIndex].compute(steerNorm, throttleNorm);
         cmdVelPublisher.updateCommand(twist.linearX, twist.angularZ);
 
+        String profileChangeLogFinal = profileChangeLog;
         runOnUiThread(() -> {
             channelsText.setText(getString(R.string.channels_format,
                     formatAllChannels(channels), steerNorm, throttleNorm));
-            twistText.setText(getString(R.string.twist_format, twist.linearX, twist.angularZ));
-            profileText.setText(getString(R.string.profile_format, profiles[profileIndex].name));
+            linearXText.setText(getString(R.string.value_mps, twist.linearX));
+            angularZText.setText(getString(R.string.value_radps, twist.angularZ));
+            profileText.setText(profiles[profileIndex].name);
+            profileDot.setBackgroundResource(PROFILE_DOT_DRAWABLES[profileIndex]);
+            if (profileChangeLogFinal != null) {
+                appendLog(profileChangeLogFinal);
+            }
             updateStats();
         });
     }
@@ -297,8 +346,9 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     }
 
     private void updateStats() {
-        statsText.setText(getString(R.string.stats_format,
-                validFrames.get(), crcErrors.get(), resyncs.get()));
+        validFramesText.setText(String.valueOf(validFrames.get()));
+        crcErrorsText.setText(String.valueOf(crcErrors.get()));
+        resyncsText.setText(String.valueOf(resyncs.get()));
         unknownFramesText.setText(getString(R.string.unknown_frames_format,
                 summarizeUnknownFrames()));
     }
