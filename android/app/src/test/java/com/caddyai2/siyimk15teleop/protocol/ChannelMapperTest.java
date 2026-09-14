@@ -54,5 +54,32 @@ public class ChannelMapperTest {
     public void indicesMatchConfirmedMapping() {
         assertEquals(0, ChannelMapper.CHANNEL_INDEX_STEER);
         assertEquals(2, ChannelMapper.CHANNEL_INDEX_THROTTLE);
+        assertEquals(6, ChannelMapper.CHANNEL_INDEX_PROFILE_SWITCH);
+    }
+
+    @Test
+    public void threeWaySwitchBucketsRealCapturedDetentValues() {
+        // ~1050/1500/1950 are the real resting values seen on this handset's switch cluster
+        // (2026-09-14 on-device capture) — not just the theoretical 1000/1500/2000.
+        assertEquals(0, ChannelMapper.threeWaySwitchPosition(1050));
+        assertEquals(1, ChannelMapper.threeWaySwitchPosition(1500));
+        assertEquals(2, ChannelMapper.threeWaySwitchPosition(1950));
+    }
+
+    @Test
+    public void threeWaySwitchIsRobustToJitterNearDetents() {
+        assertEquals(0, ChannelMapper.threeWaySwitchPosition(1000));
+        assertEquals(0, ChannelMapper.threeWaySwitchPosition(1299));
+        assertEquals(1, ChannelMapper.threeWaySwitchPosition(1300));
+        assertEquals(1, ChannelMapper.threeWaySwitchPosition(1700));
+        assertEquals(2, ChannelMapper.threeWaySwitchPosition(1701));
+        assertEquals(2, ChannelMapper.threeWaySwitchPosition(2000));
+    }
+
+    @Test
+    public void profileSwitchPositionReadsChannelIndex6() {
+        int[] channels = new int[16];
+        channels[6] = 1950;
+        assertEquals(2, mapper.profileSwitchPosition(channels));
     }
 }

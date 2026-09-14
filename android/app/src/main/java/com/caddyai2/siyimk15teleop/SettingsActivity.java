@@ -14,8 +14,14 @@ import com.caddyai2.siyimk15teleop.config.TeleopConfig;
  * no view-model, this is a single-screen settings form for a field-testing tool,
  * not an app with a back stack to preserve state across.
  *
+ * <p>Three driving-profile cards (index matches {@code ChannelMapper.CHANNEL_INDEX_PROFILE_SWITCH}'s
+ * CH7 three-way-switch bucket — low/mid/high) replace the old single wheelbase/max-steer/max-speed
+ * block (2026-09-14): wheelbase is gone entirely (see {@code BicycleTwistComputer}'s Javadoc for
+ * why), and max steer/max speed are now one pair per switch position, synced together, instead
+ * of one global pair.
+ *
  * <p>Changes only take effect once this activity finishes and {@code MainActivity}
- * resumes: {@code onStart()} there rebuilds the kinematics computer and the DDS
+ * resumes: {@code onStart()} there rebuilds the kinematics computers and the DDS
  * publisher from the current {@link TeleopConfig} every time, so returning here
  * (even via back) always picks up whatever was last saved.
  */
@@ -23,14 +29,27 @@ public class SettingsActivity extends AppCompatActivity {
 
     private TeleopConfig config;
 
-    private EditText wheelbaseInput;
-    private EditText maxSteerInput;
-    private EditText maxSpeedInput;
+    private final EditText[] profileNameInputs = new EditText[TeleopConfig.PROFILE_COUNT];
+    private final EditText[] profileMaxSteerInputs = new EditText[TeleopConfig.PROFILE_COUNT];
+    private final EditText[] profileMaxSpeedInputs = new EditText[TeleopConfig.PROFILE_COUNT];
+
     private EditText topicNameInput;
     private EditText frameIdInput;
     private EditText domainIdInput;
     private EditText publishRateInput;
     private EditText staleTimeoutInput;
+
+    // Per-profile view IDs, indexed 0..PROFILE_COUNT-1 — see activity_settings.xml
+    // (profile0NameInput, profile1NameInput, profile2NameInput, ...).
+    private static final int[] PROFILE_NAME_IDS = {
+            R.id.profile0NameInput, R.id.profile1NameInput, R.id.profile2NameInput
+    };
+    private static final int[] PROFILE_MAX_STEER_IDS = {
+            R.id.profile0MaxSteerInput, R.id.profile1MaxSteerInput, R.id.profile2MaxSteerInput
+    };
+    private static final int[] PROFILE_MAX_SPEED_IDS = {
+            R.id.profile0MaxSpeedInput, R.id.profile1MaxSpeedInput, R.id.profile2MaxSpeedInput
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,9 +57,11 @@ public class SettingsActivity extends AppCompatActivity {
         setContentView(R.layout.activity_settings);
         config = new TeleopConfig(this);
 
-        wheelbaseInput = findViewById(R.id.wheelbaseInput);
-        maxSteerInput = findViewById(R.id.maxSteerInput);
-        maxSpeedInput = findViewById(R.id.maxSpeedInput);
+        for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+            profileNameInputs[i] = findViewById(PROFILE_NAME_IDS[i]);
+            profileMaxSteerInputs[i] = findViewById(PROFILE_MAX_STEER_IDS[i]);
+            profileMaxSpeedInputs[i] = findViewById(PROFILE_MAX_SPEED_IDS[i]);
+        }
         topicNameInput = findViewById(R.id.topicNameInput);
         frameIdInput = findViewById(R.id.frameIdInput);
         domainIdInput = findViewById(R.id.domainIdInput);
@@ -55,9 +76,12 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void loadCurrentValues() {
-        wheelbaseInput.setText(String.valueOf(config.getWheelbaseMeters()));
-        maxSteerInput.setText(String.valueOf(config.getMaxSteerAngleDeg()));
-        maxSpeedInput.setText(String.valueOf(config.getMaxSpeedMps()));
+        for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+            TeleopConfig.Profile p = config.getProfile(i);
+            profileNameInputs[i].setText(p.name);
+            profileMaxSteerInputs[i].setText(String.valueOf(p.maxSteerAngleDeg));
+            profileMaxSpeedInputs[i].setText(String.valueOf(p.maxSpeedMps));
+        }
         topicNameInput.setText(config.getTopicName());
         frameIdInput.setText(config.getFrameId());
         domainIdInput.setText(String.valueOf(config.getDomainId()));
@@ -66,9 +90,11 @@ public class SettingsActivity extends AppCompatActivity {
     }
 
     private void restoreDefaults() {
-        wheelbaseInput.setText(String.valueOf(TeleopConfig.DEFAULT_WHEELBASE_M));
-        maxSteerInput.setText(String.valueOf(TeleopConfig.DEFAULT_MAX_STEER_DEG));
-        maxSpeedInput.setText(String.valueOf(TeleopConfig.DEFAULT_MAX_SPEED_MPS));
+        for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+            profileNameInputs[i].setText(TeleopConfig.DEFAULT_PROFILE_NAMES[i]);
+            profileMaxSteerInputs[i].setText(String.valueOf(TeleopConfig.DEFAULT_PROFILE_MAX_STEER_DEG[i]));
+            profileMaxSpeedInputs[i].setText(String.valueOf(TeleopConfig.DEFAULT_PROFILE_MAX_SPEED_MPS[i]));
+        }
         topicNameInput.setText(TeleopConfig.DEFAULT_TOPIC_NAME);
         frameIdInput.setText(TeleopConfig.DEFAULT_FRAME_ID);
         domainIdInput.setText(String.valueOf(TeleopConfig.DEFAULT_DOMAIN_ID));
@@ -80,18 +106,24 @@ public class SettingsActivity extends AppCompatActivity {
     /** Parses + range-checks every field before writing any of them, so a save never half-applies. */
     private void save() {
         try {
-            double wheelbase = requirePositive(parseDouble(wheelbaseInput), "wheelbase");
-            double maxSteerDeg = requireInRange(parseDouble(maxSteerInput), 1, 90, "max_steer_deg");
-            double maxSpeed = requirePositive(parseDouble(maxSpeedInput), "max_speed");
+            String[] names = new String[TeleopConfig.PROFILE_COUNT];
+            double[] maxSteerDegs = new double[TeleopConfig.PROFILE_COUNT];
+            double[] maxSpeeds = new double[TeleopConfig.PROFILE_COUNT];
+            for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+                names[i] = requireNonBlank(profileNameInputs[i].getText().toString(), "perfil " + (i + 1) + " nombre");
+                maxSteerDegs[i] = requireInRange(parseDouble(profileMaxSteerInputs[i]), 1, 90,
+                        "perfil " + (i + 1) + " max_steer_deg");
+                maxSpeeds[i] = requirePositive(parseDouble(profileMaxSpeedInputs[i]), "perfil " + (i + 1) + " max_speed");
+            }
             String topic = requireNonBlank(topicNameInput.getText().toString(), "topic");
             String frameId = requireNonBlank(frameIdInput.getText().toString(), "frame_id");
             int domainId = requireNonNegative(parseInt(domainIdInput), "domain_id");
             int publishRate = (int) requirePositive(parseInt(publishRateInput), "publish_rate_hz");
             long staleTimeout = (long) requireNonNegative(parseLong(staleTimeoutInput), "stale_timeout_ms");
 
-            config.setWheelbaseMeters(wheelbase);
-            config.setMaxSteerAngleDeg(maxSteerDeg);
-            config.setMaxSpeedMps(maxSpeed);
+            for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+                config.setProfile(i, names[i], maxSteerDegs[i], maxSpeeds[i]);
+            }
             config.setTopicName(topic);
             config.setFrameId(frameId);
             config.setDomainId(domainId);

@@ -113,13 +113,28 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 editable in-app via the "⚙ Ajustes" button on the main screen
 (`SettingsActivity`), which validates every field before saving and applies
 the new values the moment you return (`MainActivity.onStart()` rebuilds the
-kinematics computer and DDS publisher from the current config every time):
+kinematics computers and DDS publisher from the current config every time).
 
-| Setting | Default | Meaning |
+**Driving profiles (2026-09-14)**: wheelbase is no longer a setting at all
+(see `BicycleTwistComputer`'s Javadoc for why) — instead, max steer angle and
+max speed are grouped into **3 profiles**, selected live by the MK15's CH7
+three-position switch (one of its 3-position switches, see
+`ChannelMapper.CHANNEL_INDEX_PROFILE_SWITCH`). One switch position picks
+both values together, synced, for a given scenario:
+
+| Profile (CH7 position) | Default name | Default max steer | Default max speed |
+|---|---|---|---|
+| 0 (low) | Maniobra | 22.9° | 0.5 m/s |
+| 1 (mid) | Normal | 22.9° | 1.5 m/s |
+| 2 (high) | Transporte | 15.0° | 2.5 m/s |
+
+All 6 numbers (and the 3 names) are independently editable per-vehicle in
+Settings — the defaults above are starting points, not measured/required
+values. The active profile is shown live on the main screen and logged on
+every switch transition.
+
+| Other setting | Default | Meaning |
 |---|---|---|
-| Wheelbase | 1.65 m | From `caddy_ai2_ros2_controllers`'s `bicycle_to_ackermann_steering_adapter` config — override per-vehicle. |
-| Max steer angle | 22.9° (~0.4 rad) | Same source. |
-| Max speed | 1.5 m/s | Same source. |
 | Topic name | `/bicycle_steering_controller/reference` | The target `steering_controllers_library` controller's reference topic — **must be set to match the real controller instance name on the robot**, this default is a placeholder. |
 | Frame ID | `base_link` | `header.frame_id` on the published `TwistStamped`. |
 | DDS domain ID | 0 | Must match the robot's `ROS_DOMAIN_ID`. |

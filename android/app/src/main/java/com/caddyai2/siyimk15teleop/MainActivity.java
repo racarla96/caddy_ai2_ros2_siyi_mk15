@@ -56,7 +56,12 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
 
     private TeleopConfig config;
     private ChannelMapper channelMapper;
-    private BicycleTwistComputer twistComputer;
+    // One computer per TeleopConfig driving profile (index matches ChannelMapper's CH7
+    // three-way-switch bucket, see TeleopConfig's Javadoc) — rebuilt from config in onStart(),
+    // selected live per-frame in onFrame() by the switch's current position.
+    private BicycleTwistComputer[] twistComputers = new BicycleTwistComputer[TeleopConfig.PROFILE_COUNT];
+    private TeleopConfig.Profile[] profiles = new TeleopConfig.Profile[TeleopConfig.PROFILE_COUNT];
+    private int activeProfileIndex = -1;
     private SteeringReferencePublisher cmdVelPublisher;
     private SiyiSerialReader serialReader;
     private WifiManager.MulticastLock multicastLock;
@@ -64,6 +69,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private TextView statusText;
     private TextView channelsText;
     private TextView twistText;
+    private TextView profileText;
     private TextView statsText;
     private TextView unknownFramesText;
     private TextView logText;
@@ -107,6 +113,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         statusText = findViewById(R.id.statusText);
         channelsText = findViewById(R.id.channelsText);
         twistText = findViewById(R.id.twistText);
+        profileText = findViewById(R.id.profileText);
         statsText = findViewById(R.id.statsText);
         unknownFramesText = findViewById(R.id.unknownFramesText);
         logText = findViewById(R.id.logText);
@@ -126,11 +133,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         acquireMulticastLock();
     }
 
-    private void rebuildTwistComputer() {
-        twistComputer = new BicycleTwistComputer(
-                config.getWheelbaseMeters(),
-                config.getMaxSteerAngleRad(),
-                config.getMaxSpeedMps());
+    private void rebuildTwistComputers() {
+        for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+            profiles[i] = config.getProfile(i);
+            twistComputers[i] = new BicycleTwistComputer(
+                    profiles[i].maxSteerAngleRad(),
+                    profiles[i].maxSpeedMps);
+        }
+        activeProfileIndex = -1; // force the first onFrame to log the initial profile
     }
 
     private void acquireMulticastLock() {
@@ -146,7 +156,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     protected void onStart() {
         super.onStart();
 
-        rebuildTwistComputer();
+        rebuildTwistComputers();
         cmdVelPublisher = new SteeringReferencePublisher(
                 config.getTopicName(),
                 config.getFrameId(),
@@ -155,9 +165,14 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
                 config.getLocalStaleTimeoutMs());
         cmdVelPublisher.start();
         appendLog(String.format(Locale.getDefault(),
-                "Config: topic=%s domain=%d rate=%dHz wheelbase=%.2fm maxSteer=%.1f° maxSpeed=%.2fm/s",
-                config.getTopicName(), config.getDomainId(), config.getPublishRateHz(),
-                config.getWheelbaseMeters(), config.getMaxSteerAngleDeg(), config.getMaxSpeedMps()));
+                "Config: topic=%s frame=%s domain=%d rate=%dHz",
+                config.getTopicName(), config.getFrameId(), config.getDomainId(),
+                config.getPublishRateHz()));
+        for (int i = 0; i < TeleopConfig.PROFILE_COUNT; i++) {
+            appendLog(String.format(Locale.getDefault(),
+                    "  Perfil %d (%s): maxSteer=%.1f° maxSpeed=%.2fm/s",
+                    i, profiles[i].name, profiles[i].maxSteerAngleDeg, profiles[i].maxSpeedMps));
+        }
 
         serialReader = new SiyiSerialReader(this);
         serialReader.start();
@@ -213,13 +228,23 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         int[] channels = frame.decodeChannels();
         double steerNorm = channelMapper.normalizeSteer(channels);
         double throttleNorm = channelMapper.normalizeThrottle(channels);
-        BicycleTwistComputer.Twist twist = twistComputer.compute(steerNorm, throttleNorm);
+
+        int profileIndex = channelMapper.profileSwitchPosition(channels);
+        if (profileIndex != activeProfileIndex) {
+            activeProfileIndex = profileIndex;
+            TeleopConfig.Profile p = profiles[profileIndex];
+            appendLog(String.format(Locale.getDefault(),
+                    "Perfil activo: %s (maxSteer=%.1f° maxSpeed=%.2fm/s, CH7)",
+                    p.name, p.maxSteerAngleDeg, p.maxSpeedMps));
+        }
+        BicycleTwistComputer.Twist twist = twistComputers[profileIndex].compute(steerNorm, throttleNorm);
         cmdVelPublisher.updateCommand(twist.linearX, twist.angularZ);
 
         runOnUiThread(() -> {
             channelsText.setText(getString(R.string.channels_format,
                     formatAllChannels(channels), steerNorm, throttleNorm));
             twistText.setText(getString(R.string.twist_format, twist.linearX, twist.angularZ));
+            profileText.setText(getString(R.string.profile_format, profiles[profileIndex].name));
             updateStats();
         });
     }

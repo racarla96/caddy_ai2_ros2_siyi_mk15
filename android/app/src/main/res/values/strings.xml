@@ -6,6 +6,7 @@
     <string name="status_error">Error: %1$s</string>
     <string name="channels_format">%1$s\nnorm: steer(CH1)=%2$.2f  throttle(CH3)=%3$.2f</string>
     <string name="twist_format">Twist -&gt; linear.x=%1$.2f m/s  angular.z=%2$.2f rad/s</string>
+    <string name="profile_format">Perfil: %1$s (CH7)</string>
     <string name="stats_format">frames válidos=%1$d  crc_err=%2$d  resyncs=%3$d</string>
     <string name="unknown_frames_format">Frames desconocidos:\n%1$s</string>
     <string name="unknown_frames_none">ninguno</string>
@@ -16,14 +17,20 @@
     <string name="sdk_channels_test_button">Probar canales</string>
 
     <string name="settings_title">Ajustes de teleoperación</string>
-    <string name="settings_label_wheelbase">Distancia entre ejes (m)</string>
+    <string name="settings_profiles_subtitle">3 perfiles de conducción, seleccionados en vivo con el interruptor CH7 del mando</string>
+    <string name="settings_profile_low_header">Perfil 1 — CH7 abajo</string>
+    <string name="settings_profile_mid_header">Perfil 2 — CH7 centro</string>
+    <string name="settings_profile_high_header">Perfil 3 — CH7 arriba</string>
+    <string name="settings_label_profile_name">Nombre del perfil</string>
     <string name="settings_label_max_steer">Ángulo de dirección máximo (°)</string>
     <string name="settings_label_max_speed">Velocidad máxima (m/s)</string>
-    <string name="settings_label_topic">Topic</string>
+    <string name="settings_transport_subtitle">Transporte (DDS)</string>
+    <string name="settings_label_topic">Topic de referencia</string>
     <string name="settings_label_frame_id">Frame ID</string>
     <string name="settings_label_domain_id">DDS domain ID</string>
     <string name="settings_label_publish_rate">Tasa de publicación (Hz)</string>
     <string name="settings_label_stale_timeout">Timeout de datos obsoletos (ms)</string>
+    <string name="settings_hint_stale_timeout">Si no llega ningún frame válido del joystick en esta ventana, la app publica velocidad/dirección cero (protección local ante un enlace serie colgado). No cubre pérdida de paquetes DDS/WiFi entre el mando y el robot — eso debe vigilarse en el lado del robot.</string>
     <string name="settings_save">Guardar</string>
     <string name="settings_cancel">Cancelar</string>
     <string name="settings_restore_defaults">Restaurar valores por defecto</string>

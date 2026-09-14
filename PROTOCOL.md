@@ -583,9 +583,22 @@ transmitting side could fix.
 (see README's "Robot-side target" note and `SteeringReferencePublisher`).
 That controller's `SteeringKinematics::convert_twist_to_steering_angle`
 recovers the angle via plain `std::atan(angular_z * wheelbase / linear_x)`
-— **not** `atan2` — which is odd/sign-preserving, so it recovers the exact
-intended angle for `linear_x < 0` too (see
-`BicycleTwistComputerTest.reverseWithSteerAlsoRecoversExactAngleViaAtan`,
+— **not** `atan2` — which is odd/sign-preserving, so the *ratio*
+`angular_z/linear_x` this app publishes keeps the same sign for
+`linear_x < 0` too (see
+`BicycleTwistComputerTest.reverseWithSteerKeepsTheSameSteerRatio`,
 which replaced the old `reverseWithSteerDoesNotRoundTripCleanly` regression
 test documenting the bug above). This limitation only resurfaces if
 something in this project goes back to publishing to `bicycle_cmd_relay`.
+
+**Further update, same day**: `BicycleTwistComputer` no longer tries to know
+or match the robot's real `wheelbase` at all (agreed with the user — see
+its Javadoc and `TeleopConfig`'s driving-profile Javadoc). It publishes
+`angular_z` proportional to the joystick's steer fraction directly
+(`linear_x * tan(steerNorm * maxSteerAngleRad)`, no `/wheelbase` term), so
+the angle the robot actually recovers via its own `wheelbase` is only exact
+if that value happens to be `1` — otherwise it's a monotonic, proportional
+response from center to full lock, not an exact angle match. This was a
+deliberate simplification, not an oversight: exact recovery would require
+this app to know the robot's real wheelbase (previously a user-editable
+setting, now removed entirely along with the parameter).
