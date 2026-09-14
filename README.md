@@ -32,12 +32,13 @@ its sticks, and speaks DDS directly over the existing WiFi link to the robot.
 `ros2_controllers` [`steering_controllers_library`](https://control.ros.org/rolling/doc/ros2_controllers/steering_controllers_library/doc/userdoc.html)
 controller's `<controller_name>/reference` topic (`geometry_msgs/TwistStamped`),
 **not** the sibling `caddy_ai2_ros2_controllers` repo's `bicycle_cmd_relay`
-anymore — see `BicycleTwistComputer`'s Javadoc for why (that controller's
-`atan`-based steering-angle recovery both allows commanding the steering
-joint while stationary, via a small "creep" reference speed, and — as a
-side effect — fixes the reverse-steering sign bug `bicycle_cmd_relay`'s own
-`atan2`-based recovery had). `TeleopConfig`'s `topic_name`/`frame_id` must
-be set to match the real controller instance on the robot.
+anymore — see `BicycleTwistComputer`'s Javadoc for why. `steer` and
+`throttle` are published fully independently (`angular_z` from the steer
+stick alone, `linear_x` from the throttle stick alone, no cross-term
+between them — settled after live on-device testing showed an earlier
+wheelbase/ratio-based coupling made `angular_z` look like "not working"
+whenever the vehicle was stopped). `TeleopConfig`'s `topic_name`/`frame_id`
+must be set to match the real controller instance on the robot.
 
 ## Project layout
 
@@ -52,10 +53,22 @@ be set to match the real controller instance on the robot.
     republishes `TwistStamped` at a fixed rate independent of input frame rate.
   - `config/` — `TeleopConfig`: user-adjustable vehicle/transport parameters,
     persisted in `SharedPreferences`.
-  - `MainActivity` — wiring + live diagnostics UI (raw channel values,
-    computed `Twist`, frame/error counters, an on-screen scrolling event
-    log) only; no protocol/math logic of its own.
-  - `SettingsActivity` — in-app form for every `TeleopConfig` field.
+  - `diagnostics/` — `DiagnosticsState`: thread-safe singleton (frame
+    counters, unknown-frame tally, event log) that `MainActivity` writes to
+    from the serial read thread and `DiagnosticsActivity` polls and
+    displays — the two screens' only coupling.
+  - `util/` — `FullscreenHelper`: the immersive/fullscreen System UI flags
+    shared by all three activities.
+  - `MainActivity` — wiring + the live driving status (connection, active
+    profile, current `linear.x`/`angular.z`) only; no protocol/math logic
+    or raw protocol dump of its own (2026-09-14 — see `DiagnosticsActivity`).
+  - `DiagnosticsActivity` — the raw link/protocol screen: frame counters,
+    unknown-frame tally, the 16-channel dump, the SIYI Datalink SDK
+    (`ttyHS0`) one-shot firmware-version test, and the scrolling event log.
+    Reached from `MainActivity` via a button; not part of the normal
+    operating flow.
+  - `SettingsActivity` — in-app form for every `TeleopConfig` field
+    (the 3 driving profiles, then transport settings).
 - `PROTOCOL.md` — the reverse-engineered SIYI MK15 serial protocol.
 - `SDK_COMMANDS.md` — full command-by-command catalog of the official SIYI
   Datalink SDK protocol (manual section 4.8), with real on-device test
@@ -170,14 +183,30 @@ being dropped in flight.
   `steering_controllers_library` directly (2026-09-14, not yet validated on
   real hardware/robot)**: `SteeringReferencePublisher` now publishes
   `geometry_msgs/TwistStamped` to a `<controller_name>/reference` topic
-  instead of a plain `Twist` to `bicycle_cmd_relay`. `BicycleTwistComputer`
-  was reworked to match that controller's `atan`-based (not `atan2`-based)
-  steering-angle recovery — see its Javadoc. This both enables positioning
-  the steering joint while stationary (via a small constant "creep"
-  reference speed, since the message format has no way to say "point the
-  wheel, don't move") and fixes the reverse-steering sign bug below as a
-  side effect. Built and unit-tested only so far — needs on-device
-  validation against a real `steering_controllers_library` instance next.
+  instead of a plain `Twist` to `bicycle_cmd_relay`.
+- **`BicycleTwistComputer` publishes steer/throttle fully independently
+  (2026-09-14, settled after 3 rounds of live on-device testing)**:
+  `angular_z` comes from the steer stick alone, `linear_x` from the
+  throttle stick alone — no cross-term. An earlier revision tried to make
+  `angular_z` exactly recoverable via that controller's own
+  `atan(angular_z*wheelbase/linear_x)` formula (a small "creep" `linear_x`
+  substituted at zero throttle so the ratio stayed defined), but that made
+  `angular_z` numerically tiny and look broken whenever the vehicle was
+  stopped — confirmed live (`linear.x=0.02 angular.z=0.01` while holding
+  full steer lock, throttle centered). The user's call: drop the coupling
+  entirely, at the cost of no longer exactly satisfying that controller's
+  ratio-based angle recovery at zero throttle. See
+  `BicycleTwistComputer`'s Javadoc.
+- **UI overhaul (2026-09-14), verified live on real hardware**: fixed a
+  real crash (`CalledFromWrongThreadException` — a profile-change log line
+  touched views from the serial read thread instead of via
+  `runOnUiThread()`, confirmed via on-device logcat) that hit every time
+  the CH7 switch changed position. Also replaced the original flat
+  monospace-dump screen with a dark, card-based layout (status/profile
+  merged into one card, live `linear.x`/`angular.z` tiles), split the raw
+  protocol diagnostics out into their own `DiagnosticsActivity` screen,
+  and made all three activities run fullscreen/immersive. See
+  `DiagnosticsState`'s Javadoc for how the two screens share live data.
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
   `assembleDebug` produces an installable APK. `FrameParser`'s header
   layout is validated against a real hardware-captured `0x20/0x01` frame
@@ -194,10 +223,27 @@ being dropped in flight.
 - Only the joystick-channel frame type (`0x20/0x01`) is decoded today;
   buttons and extended telemetry frames are parsed (correct length/CRC) but
   ignored. See the frame catalog in PROTOCOL.md to extend this.
-- ~~Reverse-steering commands are not recovered correctly by the robot-side
-  `bicycle_cmd_relay`~~ — **moot now that this app targets
-  `steering_controllers_library` instead** (2026-09-14): that controller's
-  `atan`-based recovery is sign-preserving for reverse, unlike
-  `bicycle_cmd_relay`'s `atan2`-based one. Still true if something in this
-  project ever goes back to publishing to `bicycle_cmd_relay` — see
-  PROTOCOL.md's "Known limitation" section for the original writeup.
+- **Reverse-steering sign, revisited (2026-09-14)**: the original
+  `bicycle_cmd_relay`/`atan2` version of this bug (see PROTOCOL.md's
+  "Known limitation" section) no longer applies since this app doesn't
+  target `bicycle_cmd_relay` anymore — but making `angular_z`/`linear_x`
+  fully independent (this same update) means `steering_controllers_library`'s
+  own `atan(angular_z*wheelbase/linear_x)` recovery can flip the recovered
+  steering direction's sign when reversing, since `linear_x`'s sign no
+  longer cancels against `angular_z`'s the way the earlier ratio-coupled
+  design guaranteed. Not yet tested against a real controller instance —
+  worth checking once the robot is available, since this is a different,
+  newly-introduced trade-off from the original bug, not the same one.
+
+## Acknowledgments
+
+This app's entire ROS 2 DDS layer — the pure-Java client that lets an
+Android app publish/subscribe without `rclcpp`, a ROS 2 install, or a
+companion computer — is [`jros2`](https://github.com/ihmcrobotics/jros2)
+by [IHMC Robotics](https://github.com/ihmcrobotics), used here via its
+`jros2-android` artifact (`us.ihmc:jros2-android:1.5.1`, see
+`android/app/build.gradle.kts`). `SteeringReferencePublisher` (`ros2/`)
+is a thin wrapper around `us.ihmc.jros2.ROS2Node`/`ROS2Publisher`; the
+`geometry_msgs`/`std_msgs`/`builtin_interfaces` message classes it uses
+are jros2's own generated bindings. None of this project's DDS
+functionality would exist without that library.

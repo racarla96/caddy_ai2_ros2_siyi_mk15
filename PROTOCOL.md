@@ -602,3 +602,31 @@ response from center to full lock, not an exact angle match. This was a
 deliberate simplification, not an oversight: exact recovery would require
 this app to know the robot's real wheelbase (previously a user-editable
 setting, now removed entirely along with the parameter).
+
+**Update, later the same day: `angular_z`/`linear_x` decoupled entirely.**
+The `linear_x * tan(steerNorm * maxSteerAngleRad)` formula above still
+tied `angular_z`'s *magnitude* to the throttle stick — at zero throttle a
+small "creep" `linear_x` (`0.02 m/s`) was substituted so the ratio stayed
+defined, which kept the steering-angle *ratio* correct but made the raw
+`angular_z` number tiny (confirmed live: `linear.x=0.02 angular.z=0.01`
+while holding full steer lock with the throttle centered) — easy to
+mistake for "not working." After three rounds of live on-device
+clarification, the user's explicit, final requirement: steer and throttle
+must be **fully independent**, no cross-term at all. `BicycleTwistComputer`
+now publishes `angular_z = steerNorm * maxSteerAngleRad` and
+`linear_x = throttleNorm * maxSpeedMps` completely separately — no
+`tan()`, no creep, no wheelbase term, no coupling of any kind. The
+`CREEP_MPS` constant and the "publish a nonzero linear_x to keep the ratio
+defined" logic are gone.
+
+**Trade-off accepted, not yet tested against a real controller**: this
+means `steering_controllers_library`'s own
+`phi = atan(angular_z * wheelbase_robot / linear_x)` recovery on the robot
+side no longer gets a ratio-preserving pair of numbers from this app — at
+zero throttle it's back to the original degenerate case (`angular_z/0`),
+and while reversing, `linear_x`'s sign no longer cancels against
+`angular_z`'s (unlike the ratio-coupled design, which was sign-consistent
+across forward/reverse by construction). Both are known, accepted
+consequences of the independence requirement — not yet validated against
+an actual `steering_controllers_library` instance, since the robot has
+not been available this session.
