@@ -3,13 +3,13 @@
 An Android app that turns a SIYI MK15 handset into a ROS 2 teleop joystick for
 the `caddy_ai2` platform: it reads the handset's own internal joystick
 protocol straight off its serial port, converts steer/throttle into a
-bicycle-model `geometry_msgs/Twist`, and publishes it over DDS on the WiFi
+bicycle-model steering reference, and publishes it over DDS on the WiFi
 link the MK15 already uses for video/telemetry — no ROS 2 install, no
 `rclcpp`, no companion computer needed on the handset side.
 
 ```
-/dev/ttyHS1  →  SiyiSerialReader  →  FrameParser  →  ChannelMapper  →  BicycleTwistComputer  →  TwistCmdVelPublisher
-   (UART)         (raw bytes)      (validated frames)  (normalized       (geometry_msgs/Twist)      (DDS, WiFi)
+/dev/ttyHS1  →  SiyiSerialReader  →  FrameParser  →  ChannelMapper  →  BicycleTwistComputer  →  SteeringReferencePublisher
+   (UART)         (raw bytes)      (validated frames)  (normalized       (geometry_msgs/TwistStamped)      (DDS, WiFi)
                                                           steer/throttle)
 ```
 
@@ -27,10 +27,17 @@ no vendor-supported way to get its physical stick positions onto a ROS 2
 topic. This app runs *on the handset itself* (it's just another Android app,
 sideloaded), reads the same internal UART the handset's own firmware uses for
 its sticks, and speaks DDS directly over the existing WiFi link to the robot.
-The robot-side consumer (`bicycle_cmd_relay` in the sibling
-`caddy_ai2_ros2_controllers` repo) is out of scope here except where its
-behavior constrains what this app can safely send it — see the known
-limitation in PROTOCOL.md.
+
+**Robot-side target (changed 2026-09-14)**: this app publishes directly to a
+`ros2_controllers` [`steering_controllers_library`](https://control.ros.org/rolling/doc/ros2_controllers/steering_controllers_library/doc/userdoc.html)
+controller's `<controller_name>/reference` topic (`geometry_msgs/TwistStamped`),
+**not** the sibling `caddy_ai2_ros2_controllers` repo's `bicycle_cmd_relay`
+anymore — see `BicycleTwistComputer`'s Javadoc for why (that controller's
+`atan`-based steering-angle recovery both allows commanding the steering
+joint while stationary, via a small "creep" reference speed, and — as a
+side effect — fixes the reverse-steering sign bug `bicycle_cmd_relay`'s own
+`atan2`-based recovery had). `TeleopConfig`'s `topic_name`/`frame_id` must
+be set to match the real controller instance on the robot.
 
 ## Project layout
 
@@ -41,8 +48,8 @@ limitation in PROTOCOL.md.
   - `kinematics/` — `BicycleTwistComputer`: normalized steer/throttle →
     `Twist`.
   - `serial/` — `SiyiSerialReader`: owns the read thread on `/dev/ttyHS1`.
-  - `ros2/` — `TwistCmdVelPublisher`: owns the DDS node/publisher and
-    republishes at a fixed rate independent of input frame rate.
+  - `ros2/` — `SteeringReferencePublisher`: owns the DDS node/publisher and
+    republishes `TwistStamped` at a fixed rate independent of input frame rate.
   - `config/` — `TeleopConfig`: user-adjustable vehicle/transport parameters,
     persisted in `SharedPreferences`.
   - `MainActivity` — wiring + live diagnostics UI (raw channel values,
@@ -113,10 +120,11 @@ kinematics computer and DDS publisher from the current config every time):
 | Wheelbase | 1.65 m | From `caddy_ai2_ros2_controllers`'s `bicycle_to_ackermann_steering_adapter` config — override per-vehicle. |
 | Max steer angle | 22.9° (~0.4 rad) | Same source. |
 | Max speed | 1.5 m/s | Same source. |
-| Topic name | `/siyi_mk15/cmd_vel_raw` | Where the `Twist` is published. |
+| Topic name | `/bicycle_steering_controller/reference` | The target `steering_controllers_library` controller's reference topic — **must be set to match the real controller instance name on the robot**, this default is a placeholder. |
+| Frame ID | `base_link` | `header.frame_id` on the published `TwistStamped`. |
 | DDS domain ID | 0 | Must match the robot's `ROS_DOMAIN_ID`. |
 | Publish rate | 50 Hz | Fixed-rate heartbeat, independent of input frame rate. |
-| Local stale timeout | 300 ms | If no valid channel frame has updated the command within this window, the app zeros the outgoing `Twist` (protects against a stuck/disconnected serial link — see caveat below). |
+| Local stale timeout | 300 ms | If no valid channel frame has updated the command within this window, the app zeros the outgoing reference (protects against a stuck/disconnected serial link — see caveat below). |
 
 The local stale timeout is a *local* safety net only — it covers the
 handset's own serial link going stale, not DDS/WiFi packet loss between the
@@ -129,7 +137,7 @@ being dropped in flight.
 - **Full on-device protocol validation done (2026-09-10/11)**: ran the real
   app on the real MK15 — `SiyiSerialReader` → `FrameParser` (with the header
   fix below) → `ChannelMapper` → `BicycleTwistComputer` →
-  `TwistCmdVelPublisher` processed **2287 real hardware frames, 0 CRC
+  the DDS publisher processed **2287 real hardware frames, 0 CRC
   errors, 0 resyncs** in a single session.
 - **App now self-triggers channel streaming from a cold boot (2026-09-14),
   confirmed on real hardware**: no longer depends on a human having opened
@@ -140,9 +148,21 @@ being dropped in flight.
   "counter" field isn't an opaque nonce — only certain values are accepted)
   and the fix. Once started, streaming keeps going regardless of what's in
   the Android foreground afterward. The one remaining real-hardware
-  milestone for the whole project is confirming the DDS `Twist` reaches the
-  companion ROS 2 robot stack over WiFi — everything upstream of that is now
-  validated end-to-end, app-only, from a cold boot.
+  milestone for the whole project is confirming the DDS reference reaches
+  the companion ROS 2 robot stack over WiFi — everything upstream of that is
+  now validated end-to-end, app-only, from a cold boot.
+- **Switched the robot-side target from `bicycle_cmd_relay` to
+  `steering_controllers_library` directly (2026-09-14, not yet validated on
+  real hardware/robot)**: `SteeringReferencePublisher` now publishes
+  `geometry_msgs/TwistStamped` to a `<controller_name>/reference` topic
+  instead of a plain `Twist` to `bicycle_cmd_relay`. `BicycleTwistComputer`
+  was reworked to match that controller's `atan`-based (not `atan2`-based)
+  steering-angle recovery — see its Javadoc. This both enables positioning
+  the steering joint while stationary (via a small constant "creep"
+  reference speed, since the message format has no way to say "point the
+  wheel, don't move") and fixes the reverse-steering sign bug below as a
+  side effect. Built and unit-tested only so far — needs on-device
+  validation against a real `steering_controllers_library` instance next.
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
   `assembleDebug` produces an installable APK. `FrameParser`'s header
   layout is validated against a real hardware-captured `0x20/0x01` frame
@@ -159,6 +179,10 @@ being dropped in flight.
 - Only the joystick-channel frame type (`0x20/0x01`) is decoded today;
   buttons and extended telemetry frames are parsed (correct length/CRC) but
   ignored. See the frame catalog in PROTOCOL.md to extend this.
-- Reverse-steering commands are not recovered correctly by the robot-side
-  `bicycle_cmd_relay` — see PROTOCOL.md's "Known limitation" section. This is
-  a `bicycle_cmd_relay` fix, not something correctable from this app.
+- ~~Reverse-steering commands are not recovered correctly by the robot-side
+  `bicycle_cmd_relay`~~ — **moot now that this app targets
+  `steering_controllers_library` instead** (2026-09-14): that controller's
+  `atan`-based recovery is sign-preserving for reverse, unlike
+  `bicycle_cmd_relay`'s `atan2`-based one. Still true if something in this
+  project ever goes back to publishing to `bicycle_cmd_relay` — see
+  PROTOCOL.md's "Known limitation" section for the original writeup.

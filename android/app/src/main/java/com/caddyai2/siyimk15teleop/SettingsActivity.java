@@ -27,6 +27,7 @@ public class SettingsActivity extends AppCompatActivity {
     private EditText maxSteerInput;
     private EditText maxSpeedInput;
     private EditText topicNameInput;
+    private EditText frameIdInput;
     private EditText domainIdInput;
     private EditText publishRateInput;
     private EditText staleTimeoutInput;
@@ -41,6 +42,7 @@ public class SettingsActivity extends AppCompatActivity {
         maxSteerInput = findViewById(R.id.maxSteerInput);
         maxSpeedInput = findViewById(R.id.maxSpeedInput);
         topicNameInput = findViewById(R.id.topicNameInput);
+        frameIdInput = findViewById(R.id.frameIdInput);
         domainIdInput = findViewById(R.id.domainIdInput);
         publishRateInput = findViewById(R.id.publishRateInput);
         staleTimeoutInput = findViewById(R.id.staleTimeoutInput);
@@ -57,6 +59,7 @@ public class SettingsActivity extends AppCompatActivity {
         maxSteerInput.setText(String.valueOf(config.getMaxSteerAngleDeg()));
         maxSpeedInput.setText(String.valueOf(config.getMaxSpeedMps()));
         topicNameInput.setText(config.getTopicName());
+        frameIdInput.setText(config.getFrameId());
         domainIdInput.setText(String.valueOf(config.getDomainId()));
         publishRateInput.setText(String.valueOf(config.getPublishRateHz()));
         staleTimeoutInput.setText(String.valueOf(config.getLocalStaleTimeoutMs()));
@@ -67,6 +70,7 @@ public class SettingsActivity extends AppCompatActivity {
         maxSteerInput.setText(String.valueOf(TeleopConfig.DEFAULT_MAX_STEER_DEG));
         maxSpeedInput.setText(String.valueOf(TeleopConfig.DEFAULT_MAX_SPEED_MPS));
         topicNameInput.setText(TeleopConfig.DEFAULT_TOPIC_NAME);
+        frameIdInput.setText(TeleopConfig.DEFAULT_FRAME_ID);
         domainIdInput.setText(String.valueOf(TeleopConfig.DEFAULT_DOMAIN_ID));
         publishRateInput.setText(String.valueOf(TeleopConfig.DEFAULT_PUBLISH_RATE_HZ));
         staleTimeoutInput.setText(String.valueOf(TeleopConfig.DEFAULT_LOCAL_STALE_TIMEOUT_MS));
@@ -80,6 +84,7 @@ public class SettingsActivity extends AppCompatActivity {
             double maxSteerDeg = requireInRange(parseDouble(maxSteerInput), 1, 90, "max_steer_deg");
             double maxSpeed = requirePositive(parseDouble(maxSpeedInput), "max_speed");
             String topic = requireNonBlank(topicNameInput.getText().toString(), "topic");
+            String frameId = requireNonBlank(frameIdInput.getText().toString(), "frame_id");
             int domainId = requireNonNegative(parseInt(domainIdInput), "domain_id");
             int publishRate = (int) requirePositive(parseInt(publishRateInput), "publish_rate_hz");
             long staleTimeout = (long) requireNonNegative(parseLong(staleTimeoutInput), "stale_timeout_ms");
@@ -88,6 +93,7 @@ public class SettingsActivity extends AppCompatActivity {
             config.setMaxSteerAngleDeg(maxSteerDeg);
             config.setMaxSpeedMps(maxSpeed);
             config.setTopicName(topic);
+            config.setFrameId(frameId);
             config.setDomainId(domainId);
             config.setPublishRateHz(publishRate);
             config.setLocalStaleTimeoutMs(staleTimeout);

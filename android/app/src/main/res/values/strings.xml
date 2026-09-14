@@ -20,6 +20,7 @@
     <string name="settings_label_max_steer">Ángulo de dirección máximo (°)</string>
     <string name="settings_label_max_speed">Velocidad máxima (m/s)</string>
     <string name="settings_label_topic">Topic</string>
+    <string name="settings_label_frame_id">Frame ID</string>
     <string name="settings_label_domain_id">DDS domain ID</string>
     <string name="settings_label_publish_rate">Tasa de publicación (Hz)</string>
     <string name="settings_label_stale_timeout">Timeout de datos obsoletos (ms)</string>

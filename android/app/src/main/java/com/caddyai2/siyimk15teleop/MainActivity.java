@@ -15,7 +15,7 @@ import com.caddyai2.siyimk15teleop.config.TeleopConfig;
 import com.caddyai2.siyimk15teleop.kinematics.BicycleTwistComputer;
 import com.caddyai2.siyimk15teleop.protocol.ChannelMapper;
 import com.caddyai2.siyimk15teleop.protocol.DecodedFrame;
-import com.caddyai2.siyimk15teleop.ros2.TwistCmdVelPublisher;
+import com.caddyai2.siyimk15teleop.ros2.SteeringReferencePublisher;
 import com.caddyai2.siyimk15teleop.sdk.ChannelData;
 import com.caddyai2.siyimk15teleop.sdk.FirmwareVersion;
 import com.caddyai2.siyimk15teleop.sdk.SdkFrame;
@@ -57,7 +57,7 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
     private TeleopConfig config;
     private ChannelMapper channelMapper;
     private BicycleTwistComputer twistComputer;
-    private TwistCmdVelPublisher cmdVelPublisher;
+    private SteeringReferencePublisher cmdVelPublisher;
     private SiyiSerialReader serialReader;
     private WifiManager.MulticastLock multicastLock;
 
@@ -147,8 +147,9 @@ public class MainActivity extends AppCompatActivity implements SiyiSerialReader.
         super.onStart();
 
         rebuildTwistComputer();
-        cmdVelPublisher = new TwistCmdVelPublisher(
+        cmdVelPublisher = new SteeringReferencePublisher(
                 config.getTopicName(),
+                config.getFrameId(),
                 config.getDomainId(),
                 config.getPublishRateHz(),
                 config.getLocalStaleTimeoutMs());

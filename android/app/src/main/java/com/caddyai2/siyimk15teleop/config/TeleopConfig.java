@@ -18,6 +18,7 @@ public final class TeleopConfig {
     private static final String KEY_MAX_STEER_DEG = "max_steer_deg";
     private static final String KEY_MAX_SPEED_MPS = "max_speed_mps";
     private static final String KEY_TOPIC_NAME = "topic_name";
+    private static final String KEY_FRAME_ID = "frame_id";
     private static final String KEY_DOMAIN_ID = "domain_id";
     private static final String KEY_PUBLISH_RATE_HZ = "publish_rate_hz";
     private static final String KEY_LOCAL_STALE_TIMEOUT_MS = "local_stale_timeout_ms";
@@ -27,7 +28,12 @@ public final class TeleopConfig {
     public static final double DEFAULT_WHEELBASE_M = 1.65;
     public static final double DEFAULT_MAX_STEER_DEG = 22.9; // ~0.4 rad
     public static final double DEFAULT_MAX_SPEED_MPS = 1.5;
-    public static final String DEFAULT_TOPIC_NAME = "/siyi_mk15/cmd_vel_raw";
+    // Published directly to a ros2_controllers steering_controllers_library controller's
+    // reference topic (2026-09-14, superseded bicycle_cmd_relay — see README/PROTOCOL.md) —
+    // this MUST match the actual controller instance name configured on the robot; the default
+    // here is a placeholder, not a discovered value.
+    public static final String DEFAULT_TOPIC_NAME = "/bicycle_steering_controller/reference";
+    public static final String DEFAULT_FRAME_ID = "base_link";
     public static final int DEFAULT_DOMAIN_ID = 0;
     public static final int DEFAULT_PUBLISH_RATE_HZ = 50;
     public static final long DEFAULT_LOCAL_STALE_TIMEOUT_MS = 300;
@@ -72,6 +78,14 @@ public final class TeleopConfig {
 
     public void setTopicName(String value) {
         prefs.edit().putString(KEY_TOPIC_NAME, value).apply();
+    }
+
+    public String getFrameId() {
+        return prefs.getString(KEY_FRAME_ID, DEFAULT_FRAME_ID);
+    }
+
+    public void setFrameId(String value) {
+        prefs.edit().putString(KEY_FRAME_ID, value).apply();
     }
 
     public int getDomainId() {

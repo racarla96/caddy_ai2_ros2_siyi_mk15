@@ -557,25 +557,35 @@ earlier failing to reach the air-unit video subnet). `MainActivity`'s
 see the update above) is ready to retry this the moment any of those
 hypotheses gets tested.
 
-## Known limitation: `bicycle_cmd_relay` reverse steering recovery
+## Known limitation (historical, `bicycle_cmd_relay` target only): reverse
+## steering recovery — superseded 2026-09-14
 
 Not a protocol issue — a downstream one, but documented here because
 `BicycleTwistComputer` (the code that turns normalized steer/throttle from
-this protocol into a `geometry_msgs/Twist`) exists specifically to feed it.
+this protocol into a `geometry_msgs/Twist`) exists specifically to feed
+whatever robot-side controller consumes it.
 
-The robot-side `bicycle_cmd_relay` (in `caddy_ai2_ros2_controllers`) recovers
-a steering angle from a received Twist via
-`angle = atan2(wheelbase * angular_z, linear_x)`. `atan2(y, x)` only ranges
-over `(-π/2, π/2)` when `x > 0`. So whenever `linear_x < 0` (reverse),
-`bicycle_cmd_relay` cannot recover the originally intended steering angle: it
-reconstructs one with magnitude near `π` and the **opposite** sign of what
-was commanded (e.g. steer-left-while-reversing recovers as a large
-steer-right), which then saturates to `max_steer_angle` downstream.
+**This limitation applied only to `bicycle_cmd_relay`** (in
+`caddy_ai2_ros2_controllers`), which recovered a steering angle from a
+received Twist via `angle = atan2(wheelbase * angular_z, linear_x)`.
+`atan2(y, x)` only ranges over `(-π/2, π/2)` when `x > 0`. So whenever
+`linear_x < 0` (reverse), `bicycle_cmd_relay` could not recover the
+originally intended steering angle: it reconstructed one with magnitude near
+`π` and the **opposite** sign of what was commanded (e.g.
+steer-left-while-reversing recovered as a large steer-right), which then
+saturated to `max_steer_angle` downstream. No choice of `angular_z` on the
+transmitting side made it exact for `linear_x < 0` — a property of
+`bicycle_cmd_relay`'s own `atan2`-based recovery, not something the
+transmitting side could fix.
 
-This is a property of `bicycle_cmd_relay`'s own `atan2`-based recovery — no
-choice of `angular_z` on the transmitting side makes it exact for `linear_x <
-0`. `BicycleTwistComputerTest.reverseWithSteerDoesNotRoundTripCleanly` pins
-down the exact behavior (sign flip, magnitude `> π/2`) as a regression test,
-so a future fix on the `bicycle_cmd_relay` side (e.g. switching to `atan`, or
-an explicit sign-aware formula) has something to satisfy. Until then: reverse
-steering on the real vehicle will not behave as commanded.
+**Superseded 2026-09-14**: this project's robot-side target changed to
+`ros2_controllers`' `steering_controllers_library`, published to directly
+(see README's "Robot-side target" note and `SteeringReferencePublisher`).
+That controller's `SteeringKinematics::convert_twist_to_steering_angle`
+recovers the angle via plain `std::atan(angular_z * wheelbase / linear_x)`
+— **not** `atan2` — which is odd/sign-preserving, so it recovers the exact
+intended angle for `linear_x < 0` too (see
+`BicycleTwistComputerTest.reverseWithSteerAlsoRecoversExactAngleViaAtan`,
+which replaced the old `reverseWithSteerDoesNotRoundTripCleanly` regression
+test documenting the bug above). This limitation only resurfaces if
+something in this project goes back to publishing to `bicycle_cmd_relay`.

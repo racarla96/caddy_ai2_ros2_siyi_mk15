@@ -64,6 +64,17 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
+            android:text="@string/settings_label_frame_id" />
+        <EditText
+            android:id="@+id/frameIdInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="text" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
             android:text="@string/settings_label_domain_id" />
         <EditText
             android:id="@+id/domainIdInput"
