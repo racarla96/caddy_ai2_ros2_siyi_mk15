@@ -57,9 +57,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * {@code RandomAccessFile}, or something else entirely. Given time pressure across 4
  * power-cycles in one session, the pragmatic fix taken was to stop guessing and just reproduce
  * the recipe already proven to work: {@link #sendStartFrameViaShell} shells out to the same
- * {@code printf} invocation instead of writing through the open file. <b>This shell-based
- * version has not yet been tested cold on real hardware</b> — that's the next concrete step
- * when a hardware session resumes (see PROTOCOL.md).
+ * {@code printf} invocation instead of writing through the open file.
+ *
+ * <p><b>On-device findings (2026-09-14)</b>: the shell-based version above was tested cold
+ * (real power-cycles) and initially <b>still failed</b> — all 5 retries executed cleanly
+ * (confirmed via logcat, no errors) but triggered zero channel frames over a ~90s window.
+ * Root cause found by isolating one variable at a time, entirely outside the app (raw
+ * {@code adb shell printf} sends, bypassing Java/{@code ProcessBuilder} to rule out an
+ * execution-path difference): the write-direction <b>counter field is not an opaque nonce
+ * the RCU accepts unconditionally</b>, contradicting the original (2026-09-11) belief. On a
+ * cold boot, sending the identical start frame with a millisecond-clock-derived counter
+ * (e.g. {@code 0x8254}) got silence, while the same frame with a real vendor-captured counter
+ * (e.g. {@code 0xF317}) triggered streaming immediately — confirmed as the very first and only
+ * command sent that boot, ruling out "just needs a second attempt" as an alternative
+ * explanation. The exact acceptance rule (bit pattern? some internal RCU sequence window?)
+ * was <b>not</b> further reverse-engineered — time/hardware-cycle cost across this session's
+ * power-cycles wasn't spent bisecting it. Pragmatic fix: {@link #startStreamingRequester} now
+ * cycles through {@link #KNOWN_GOOD_START_COUNTERS} (real captured values, byte-verified in
+ * {@code ChannelStreamControlTest}) instead of a freshly computed clock value. <b>Also found,
+ * separately</b>: sending a "stop" frame (even with a real captured counter) did not observably
+ * stop an already-streaming RCU in this session's testing — not yet explained, noted as an
+ * open question, not a blocker for the start-trigger goal. <b>This counter fix itself has not
+ * yet been validated on hardware as the actual installed app</b> (only as a manual byte-level
+ * replication of what the fixed code now sends) — that's the next concrete step.
  *
  * <p>The device node ships {@code crwxrwxrwx}, owned by {@code system:system} (verified
  * with {@code adb shell ls -la /dev/ttyHS1}), so it is opened here with a plain
@@ -199,13 +219,21 @@ public final class SiyiSerialReader {
      * {@code (MAX_ATTEMPTS-1) * DELAY} ≈ 12s) is long enough that blocking on it before
      * reading would needlessly delay every normal reconnect.
      */
+    // See ChannelStreamControl's Javadoc and this file's 2026-09-14 on-device findings below:
+    // the write-direction "counter" field is NOT an opaque nonce the RCU accepts unconditionally
+    // (a millisecond-clock-derived value was tried here originally and repeatedly failed to
+    // trigger streaming on real hardware) — only values matching real vendor-captured samples
+    // have been confirmed to work. Cycle through the two distinct real captured "start" counters
+    // from ChannelStreamControlTest rather than inventing a new value.
+    private static final int[] KNOWN_GOOD_START_COUNTERS = {0xF317, 0xF31D};
+
     private Thread startStreamingRequester(AtomicBoolean channelFrameSeen) {
         Thread thread = new Thread(() -> {
             for (int attempt = 0; attempt < START_FRAME_MAX_ATTEMPTS; attempt++) {
                 if (!running || channelFrameSeen.get()) {
                     return;
                 }
-                int counter = (int) (System.currentTimeMillis() & 0xFFFF);
+                int counter = KNOWN_GOOD_START_COUNTERS[attempt % KNOWN_GOOD_START_COUNTERS.length];
                 sendStartFrameViaShell(counter, attempt + 1);
                 if (attempt < START_FRAME_MAX_ATTEMPTS - 1) {
                     try {
@@ -228,10 +256,9 @@ public final class SiyiSerialReader {
      * bytes through Java's own {@link RandomAccessFile} was tested and did not reliably
      * trigger streaming, while this exact recipe — a separate process opening, writing, and
      * closing the device node — did, repeatedly, in manual on-device testing). The counter
-     * field's semantics aren't pinned down (see {@link ChannelStreamControl}'s Javadoc) — a
-     * low-millisecond clock is good enough as an opaque nonce, matching how the real captures
-     * looked (a value that keeps moving, not a fixed constant); each retry recomputes it so no
-     * two attempts are byte-identical, in case that matters to the RCU.
+     * field is <b>not</b> an opaque nonce the RCU accepts unconditionally — see this class's
+     * 2026-09-14 on-device findings below — so {@code counter} here must be one of
+     * {@link #KNOWN_GOOD_START_COUNTERS}, not a freshly invented value.
      */
     private void sendStartFrameViaShell(int counter, int attemptNumber) {
         String shellCommand = "printf '" + toPrintfHex(ChannelStreamControl.encodeStart(counter))

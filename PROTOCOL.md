@@ -260,17 +260,53 @@ field itself, transmitted little-endian. Implementation: `Crc16.java`.
 >    `ProcessBuilder`) instead of writing through the open file, still
 >    retried up to 5×/3s apart and stopping early on a real channel frame.
 >
-> **This shell-based version has not yet been tested cold on real
-> hardware** — built and unit-tested (JVM-only, `ChannelStreamControlTest`
-> unaffected by this change) at the end of a session with no more device
-> time available. **Next hardware session, in priority order**: (1) full
-> power-cycle the MK15, confirm cold state (heartbeat only), launch the app,
-> and check whether `frames válidos` starts climbing within ~12s — if yes,
-> this closes the README "Runtime requirements" dependency for good; if the
-> shell-exec approach *also* fails cold, the Java-vs-shell root cause needs
-> actual investigation (e.g. comparing `strace`/`ltrace` of both paths, if
-> available, or testing whether even a `ProcessBuilder`-run `cat` frame
-> read behaves differently from `RandomAccessFile.read()` as a control).
+> **Update 2026-09-14: shell-based version tested cold — still failed at
+> first, real root cause found (not the Java-vs-shell gap), now fixed and
+> confirmed working end-to-end.** Ran the queued plan on a fresh power-cycle:
+> the shell-exec version fired all 5 retries cleanly (confirmed via logcat,
+> no errors/timeouts) but triggered **zero** channel frames over a ~90s
+> window. Isolated the cause one variable at a time, entirely outside the
+> app (raw `adb shell printf` sends, so the Java-vs-shell execution path
+> itself is not the confound): the write-direction **counter field (bytes
+> 4-5) is not an opaque nonce the RCU accepts unconditionally**, contrary to
+> what was assumed above ("exact meaning not pinned down, doesn't need to
+> be to replicate this" — turned out it does matter). On a cold boot,
+> sending the identical start frame with a millisecond-clock-derived counter
+> (e.g. `0x8254`, what the app was generating) got silence; the same frame
+> with a real vendor-captured counter (`0xF317`) triggered streaming
+> immediately — confirmed as the very first and only command sent that
+> boot (ruling out "just needs a second attempt somehow" as an alternative
+> explanation, tested on a separate power-cycle specifically to rule that
+> out). The exact acceptance rule (bit pattern? some internal RCU sequence
+> window?) was **not** further reverse-engineered — not spent bisecting it
+> given the hardware-cycle cost already spent this session (4 power-cycles
+> across two sessions total). **Fix**: `SiyiSerialReader` now cycles
+> through two known-good real captured counters (`0xF317`, `0xF31D`, both
+> already byte-verified in `ChannelStreamControlTest`) instead of a freshly
+> computed clock value. **Confirmed working on real hardware, cold boot,
+> app-only** (one more power-cycle, install the fixed APK, launch, don't
+> touch the vendor app at all): `frames válidos` climbed to 2676 with 0 CRC
+> errors/0 resyncs, 16 real channel values decoded, `Twist` computed
+> correctly (sticks centered → `linear.x=0.00 angular.z=0.00`). **This
+> closes the README "Runtime requirements" dependency for good** — the app
+> no longer needs a human to have opened SIYI TX's channel screen at all.
+>
+> **Also found, separately, not yet explained**: sending a "stop" frame
+> (`payload=0x00`, real captured counter) to an already-streaming RCU did
+> not observably stop it in this session's testing (checked via a follow-up
+> raw capture — channel frames kept flowing). Not a blocker for the
+> start-trigger goal (this app never needs to stop streaming today), but
+> means `ChannelStreamControl.encodeStop()` and the vendor app's own
+> decompiled stop path are unconfirmed on the wire — worth real
+> investigation if a future feature needs to actually silence the channel
+> stream (e.g. to hand control back cleanly), rather than assuming the
+> decompile-derived symmetry holds.
+>
+> A quicker gotcha hit along the way, unrelated to the counter bug: the
+> MK15's screen dozes fast enough that it can pause background Java threads
+> mid-test (`Thread.sleep`-based retry timing stretched from ~12s to 40s+
+> wall-clock with no code change) — `adb shell svc power stayon true` before
+> a timed on-device test avoids this false negative.
 
 `0x20/0x01` is observed to be the large majority (~85%) of traffic — the
 handset streams joystick state continuously regardless of whether it's

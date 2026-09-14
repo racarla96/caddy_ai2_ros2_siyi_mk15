@@ -86,19 +86,19 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
   `WifiManager.MulticastLock` for as long as it's running — without it, many
   Android WiFi stacks silently drop multicast frames and discovery never
   completes.
-- **Currently depends on the vendor app (`biz.siyi.remotecontrol`, "SIYI
-  TX")**, in two ways, confirmed on real hardware (2026-09-10/11):
-  1. Its `:rcuservice` background process must be running — `/dev/ttyHS1`
-     sits idle at 9600 baud and carries nothing at all otherwise (this is
-     the vendor service that reconfigures it to 230400 8N1).
-  2. Someone has to open that app's own channel-data screen **at least
-     once** to make the handset's RC microcontroller start streaming
-     `0x20/0x01` channel frames in the first place — not yet automated or
-     replicated by this app. Once started, though, streaming keeps going
-     indefinitely even with SIYI TX backgrounded, so it's a one-time
-     kickstart, not something that has to stay open. See PROTOCOL.md's
-     "Confirmed end-to-end on real hardware" note for the evidence and the
-     still-open question of what the actual trigger command is.
+- **Depends on the vendor app's background service, but no longer on its
+  UI** (confirmed on real hardware, 2026-09-10 through 2026-09-14):
+  1. `biz.siyi.remotecontrol`'s `:rcuservice` background process must be
+     running — `/dev/ttyHS1` sits idle at 9600 baud and carries nothing at
+     all otherwise (this is the vendor service that reconfigures it to
+     230400 8N1). It auto-starts at boot on its own; nothing to do here.
+  2. ~~Someone has to open that app's own channel-data screen at least
+     once~~ — **no longer true**. This app now sends the channel-stream
+     "start" trigger itself on every connect (`SiyiSerialReader`/
+     `ChannelStreamControl`, confirmed working cold-boot-to-streaming on
+     real hardware with the vendor app's UI never touched — see
+     PROTOCOL.md's 2026-09-14 update). Streaming, once started, keeps going
+     indefinitely even if this app is later killed/restarted.
 
 ## Configuration
 
@@ -130,14 +130,19 @@ being dropped in flight.
   app on the real MK15 — `SiyiSerialReader` → `FrameParser` (with the header
   fix below) → `ChannelMapper` → `BicycleTwistComputer` →
   `TwistCmdVelPublisher` processed **2287 real hardware frames, 0 CRC
-  errors, 0 resyncs** in a single session. Also found (empirically, not by
-  design) that once the RCU starts streaming channel data — triggered by
-  opening the vendor app's channel-data screen at least once — it keeps
-  streaming regardless of what's in the Android foreground afterward, so
-  nothing needs to keep that vendor screen open. The one remaining
-  real-hardware milestone for the whole project is confirming the DDS
-  `Twist` reaches the companion ROS 2 robot stack over WiFi — everything
-  upstream of that is now validated.
+  errors, 0 resyncs** in a single session.
+- **App now self-triggers channel streaming from a cold boot (2026-09-14),
+  confirmed on real hardware**: no longer depends on a human having opened
+  the vendor app's channel-data screen. Full power-cycle → install → launch
+  → app alone reached **2676 valid frames, 0 CRC errors, 0 resyncs**,
+  `Twist` computed correctly, vendor app UI never touched. See PROTOCOL.md's
+  2026-09-14 update for the bug that blocked this (the write-direction
+  "counter" field isn't an opaque nonce — only certain values are accepted)
+  and the fix. Once started, streaming keeps going regardless of what's in
+  the Android foreground afterward. The one remaining real-hardware
+  milestone for the whole project is confirming the DDS `Twist` reaches the
+  companion ROS 2 robot stack over WiFi — everything upstream of that is now
+  validated end-to-end, app-only, from a cold boot.
 - All protocol/kinematics unit tests pass (`./gradlew testDebugUnitTest`);
   `assembleDebug` produces an installable APK. `FrameParser`'s header
   layout is validated against a real hardware-captured `0x20/0x01` frame
